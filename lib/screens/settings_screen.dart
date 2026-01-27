@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import '../theme/comic_theme.dart';
 import '../services/parent_settings_service.dart';
 import '../services/auth_service.dart';
 import '../services/book_provider.dart';
 import '../services/export_service.dart';
 import '../services/backup_service.dart';
+import '../services/update_service.dart';
 import 'package:provider/provider.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -20,8 +22,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _parentSettings = ParentSettingsService();
   final _emailController = TextEditingController();
   final _nameController = TextEditingController();
+  final _updateService = UpdateService();
   bool _loading = true;
   bool _saving = false;
+  String _currentVersion = '';
+  UpdateInfo? _availableUpdate;
+  bool _checkingUpdate = false;
+  bool _downloadingUpdate = false;
+  double _downloadProgress = 0;
 
   @override
   void initState() {
@@ -32,13 +40,38 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _loadSettings() async {
     final email = await _parentSettings.getParentEmail();
     final name = await _parentSettings.getParentName();
+    final packageInfo = await PackageInfo.fromPlatform();
 
     if (mounted) {
       setState(() {
         _emailController.text = email ?? '';
         _nameController.text = name ?? '';
+        _currentVersion = packageInfo.version;
         _loading = false;
       });
+    }
+
+    // Comprobar actualizaciones en segundo plano
+    _checkForUpdates();
+  }
+
+  Future<void> _checkForUpdates() async {
+    if (_checkingUpdate) return;
+
+    setState(() => _checkingUpdate = true);
+
+    try {
+      final update = await _updateService.checkForUpdate();
+      if (mounted) {
+        setState(() {
+          _availableUpdate = update;
+          _checkingUpdate = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _checkingUpdate = false);
+      }
     }
   }
 
@@ -122,6 +155,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                     ),
                   ),
+
+                  const SizedBox(height: 24),
+
+                  // Actualizaciones
+                  _buildUpdateSection(),
 
                   const SizedBox(height: 24),
 
@@ -328,6 +366,208 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } finally {
       if (mounted) {
         setState(() => _saving = false);
+      }
+    }
+  }
+
+  Widget _buildUpdateSection() {
+    return _buildSection(
+      title: 'VERSION $_currentVersion',
+      icon: Icons.system_update,
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: ComicTheme.comicBorder, width: 2),
+        ),
+        child: _downloadingUpdate
+            ? _buildDownloadProgress()
+            : _availableUpdate != null
+                ? _buildUpdateAvailable()
+                : _buildNoUpdate(),
+      ),
+    );
+  }
+
+  Widget _buildNoUpdate() {
+    return Row(
+      children: [
+        Icon(
+          _checkingUpdate ? Icons.sync : Icons.check_circle,
+          color: _checkingUpdate ? Colors.grey : ComicTheme.powerGreen,
+          size: 24,
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(
+            _checkingUpdate ? 'Comprobando...' : 'Tienes la ultima version',
+            style: GoogleFonts.comicNeue(
+              fontWeight: FontWeight.bold,
+              color: ComicTheme.comicBorder,
+            ),
+          ),
+        ),
+        if (!_checkingUpdate)
+          TextButton(
+            onPressed: () => _checkForUpdates(),
+            child: Text(
+              'COMPROBAR',
+              style: GoogleFonts.bangers(
+                color: ComicTheme.secondaryBlue,
+                fontSize: 14,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildUpdateAvailable() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Icon(
+              Icons.new_releases,
+              color: ComicTheme.primaryOrange,
+              size: 24,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Nueva version disponible!',
+                    style: GoogleFonts.comicNeue(
+                      fontWeight: FontWeight.bold,
+                      color: ComicTheme.comicBorder,
+                    ),
+                  ),
+                  Text(
+                    'v${_availableUpdate!.newVersion} (${_availableUpdate!.formattedSize})',
+                    style: GoogleFonts.comicNeue(
+                      fontSize: 13,
+                      color: Colors.grey[600],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            onPressed: _downloadUpdate,
+            icon: const Icon(Icons.download, size: 20),
+            label: Text(
+              'ACTUALIZAR',
+              style: GoogleFonts.bangers(fontSize: 16),
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: ComicTheme.powerGreen,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+                side: const BorderSide(color: ComicTheme.comicBorder, width: 2),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDownloadProgress() {
+    return Column(
+      children: [
+        Row(
+          children: [
+            SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(
+                value: _downloadProgress > 0 ? _downloadProgress : null,
+                strokeWidth: 3,
+                color: ComicTheme.powerGreen,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Descargando... ${(_downloadProgress * 100).toInt()}%',
+                style: GoogleFonts.comicNeue(
+                  fontWeight: FontWeight.bold,
+                  color: ComicTheme.comicBorder,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: LinearProgressIndicator(
+            value: _downloadProgress > 0 ? _downloadProgress : null,
+            backgroundColor: Colors.grey[200],
+            color: ComicTheme.powerGreen,
+            minHeight: 8,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _downloadUpdate() async {
+    if (_availableUpdate == null) return;
+
+    setState(() {
+      _downloadingUpdate = true;
+      _downloadProgress = 0;
+    });
+
+    try {
+      final success = await _updateService.downloadAndInstall(
+        _availableUpdate!,
+        onProgress: (progress) {
+          if (mounted) {
+            setState(() => _downloadProgress = progress);
+          }
+        },
+      );
+
+      if (mounted) {
+        setState(() => _downloadingUpdate = false);
+
+        if (!success) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Error al descargar. Intenta de nuevo.',
+                style: GoogleFonts.comicNeue(fontWeight: FontWeight.bold),
+              ),
+              backgroundColor: ComicTheme.heroRed,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _downloadingUpdate = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Error: $e',
+              style: GoogleFonts.comicNeue(fontWeight: FontWeight.bold),
+            ),
+            backgroundColor: ComicTheme.heroRed,
+          ),
+        );
       }
     }
   }
