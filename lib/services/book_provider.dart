@@ -292,12 +292,13 @@ class BookProvider extends ChangeNotifier {
     final id = await _dbService.insertBook(bookToSave);
     final newBook = bookToSave.copyWith(id: id);
 
+    // Crear nuevas listas para que Selector detecte el cambio
     if (newBook.isReading) {
-      _readingBooks.insert(0, newBook);
+      _readingBooks = [newBook, ..._readingBooks];
     } else if (newBook.isWishlist) {
-      _wishlistBooks.insert(0, newBook);
+      _wishlistBooks = [newBook, ..._wishlistBooks];
     } else {
-      _finishedBooks.insert(0, newBook);
+      _finishedBooks = [newBook, ..._finishedBooks];
     }
 
     notifyListeners();
@@ -346,15 +347,15 @@ class BookProvider extends ChangeNotifier {
     final id = await _dbService.insertBook(bookToSave);
     final newBook = bookToSave.copyWith(id: id);
 
-    // Añadir a la lista correspondiente
+    // Añadir a la lista correspondiente (crear nuevas listas para Selector)
     if (newBook.isArchived) {
-      _archivedBooks.add(newBook);
+      _archivedBooks = [..._archivedBooks, newBook];
     } else if (newBook.isReading) {
-      _readingBooks.insert(0, newBook);
+      _readingBooks = [newBook, ..._readingBooks];
     } else if (newBook.isWishlist) {
-      _wishlistBooks.insert(0, newBook);
+      _wishlistBooks = [newBook, ..._wishlistBooks];
     } else {
-      _finishedBooks.insert(0, newBook);
+      _finishedBooks = [newBook, ..._finishedBooks];
     }
 
     notifyListeners();
@@ -513,8 +514,9 @@ class BookProvider extends ChangeNotifier {
     final index = _readingBooks.indexWhere((b) => b.id == bookId);
     if (index != -1) {
       final book = _readingBooks[index].copyWith(status: 'finished');
-      _readingBooks.removeAt(index);
-      _finishedBooks.insert(0, book);
+      // Crear nuevas listas para que Selector detecte el cambio
+      _readingBooks = [..._readingBooks]..removeAt(index);
+      _finishedBooks = [book, ..._finishedBooks];
       notifyListeners();
 
       // Sincronizar cambio
@@ -529,8 +531,9 @@ class BookProvider extends ChangeNotifier {
     var index = _finishedBooks.indexWhere((b) => b.id == bookId);
     if (index != -1) {
       final book = _finishedBooks[index].copyWith(status: 'reading', currentPage: 0);
-      _finishedBooks.removeAt(index);
-      _readingBooks.insert(0, book);
+      // Crear nuevas listas para que Selector detecte el cambio
+      _finishedBooks = [..._finishedBooks]..removeAt(index);
+      _readingBooks = [book, ..._readingBooks];
       await _dbService.updateCurrentPage(bookId, 0);
       notifyListeners();
       _syncBookChange(book);
@@ -541,8 +544,9 @@ class BookProvider extends ChangeNotifier {
     index = _wishlistBooks.indexWhere((b) => b.id == bookId);
     if (index != -1) {
       final book = _wishlistBooks[index].copyWith(status: 'reading', currentPage: 0);
-      _wishlistBooks.removeAt(index);
-      _readingBooks.insert(0, book);
+      // Crear nuevas listas para que Selector detecte el cambio
+      _wishlistBooks = [..._wishlistBooks]..removeAt(index);
+      _readingBooks = [book, ..._readingBooks];
       await _dbService.updateCurrentPage(bookId, 0);
       notifyListeners();
       _syncBookChange(book);
@@ -559,31 +563,32 @@ class BookProvider extends ChangeNotifier {
     // Mover libros de las listas activas a archivados
     final toArchive = <Book>[];
 
-    _readingBooks.removeWhere((b) {
+    // Crear nuevas listas filtrando la serie
+    _readingBooks = _readingBooks.where((b) {
       if (b.seriesName == seriesName) {
         toArchive.add(b.copyWith(isArchived: true));
-        return true;
+        return false;
       }
-      return false;
-    });
+      return true;
+    }).toList();
 
-    _finishedBooks.removeWhere((b) {
+    _finishedBooks = _finishedBooks.where((b) {
       if (b.seriesName == seriesName) {
         toArchive.add(b.copyWith(isArchived: true));
-        return true;
+        return false;
       }
-      return false;
-    });
+      return true;
+    }).toList();
 
-    _wishlistBooks.removeWhere((b) {
+    _wishlistBooks = _wishlistBooks.where((b) {
       if (b.seriesName == seriesName) {
         toArchive.add(b.copyWith(isArchived: true));
-        return true;
+        return false;
       }
-      return false;
-    });
+      return true;
+    }).toList();
 
-    _archivedBooks.addAll(toArchive);
+    _archivedBooks = [..._archivedBooks, ...toArchive];
     notifyListeners();
 
     // Sincronizar cambios
@@ -598,19 +603,27 @@ class BookProvider extends ChangeNotifier {
 
     // Mover libros de archivados a las listas activas
     final toUnarchive = _archivedBooks.where((b) => b.seriesName == seriesName).toList();
-    _archivedBooks.removeWhere((b) => b.seriesName == seriesName);
+    _archivedBooks = _archivedBooks.where((b) => b.seriesName != seriesName).toList();
+
+    final newReading = <Book>[];
+    final newFinished = <Book>[];
+    final newWishlist = <Book>[];
 
     for (final book in toUnarchive) {
       final unarchived = book.copyWith(isArchived: false);
       if (unarchived.isReading) {
-        _readingBooks.insert(0, unarchived);
+        newReading.add(unarchived);
       } else if (unarchived.isFinished) {
-        _finishedBooks.insert(0, unarchived);
+        newFinished.add(unarchived);
       } else if (unarchived.isWishlist) {
-        _wishlistBooks.insert(0, unarchived);
+        newWishlist.add(unarchived);
       }
       _syncBookChange(unarchived);
     }
+
+    _readingBooks = [...newReading, ..._readingBooks];
+    _finishedBooks = [...newFinished, ..._finishedBooks];
+    _wishlistBooks = [...newWishlist, ..._wishlistBooks];
 
     notifyListeners();
   }
@@ -646,11 +659,11 @@ class BookProvider extends ChangeNotifier {
       }
     }
 
-    // Eliminar de las listas locales
-    _readingBooks.removeWhere((b) => b.seriesName == seriesName);
-    _finishedBooks.removeWhere((b) => b.seriesName == seriesName);
-    _wishlistBooks.removeWhere((b) => b.seriesName == seriesName);
-    _archivedBooks.removeWhere((b) => b.seriesName == seriesName);
+    // Eliminar de las listas locales (crear nuevas listas)
+    _readingBooks = _readingBooks.where((b) => b.seriesName != seriesName).toList();
+    _finishedBooks = _finishedBooks.where((b) => b.seriesName != seriesName).toList();
+    _wishlistBooks = _wishlistBooks.where((b) => b.seriesName != seriesName).toList();
+    _archivedBooks = _archivedBooks.where((b) => b.seriesName != seriesName).toList();
 
     notifyListeners();
 
@@ -699,9 +712,10 @@ class BookProvider extends ChangeNotifier {
       debugPrint('Libro marcado como eliminado: ${bookToDelete.isbn}');
     }
 
-    _readingBooks.removeWhere((b) => b.id == bookId);
-    _finishedBooks.removeWhere((b) => b.id == bookId);
-    _wishlistBooks.removeWhere((b) => b.id == bookId);
+    // Crear nuevas listas para que Selector detecte el cambio
+    _readingBooks = _readingBooks.where((b) => b.id != bookId).toList();
+    _finishedBooks = _finishedBooks.where((b) => b.id != bookId).toList();
+    _wishlistBooks = _wishlistBooks.where((b) => b.id != bookId).toList();
 
     notifyListeners();
 
@@ -787,13 +801,13 @@ class BookProvider extends ChangeNotifier {
 
       final id = await _dbService.insertBook(volumeBook);
       final newBook = volumeBook.copyWith(id: id);
-      _finishedBooks.insert(0, newBook);
       addedBooks.add(newBook);
       addedCount++;
     }
 
-    // Notificar inmediatamente para que la UI se actualice
+    // Crear nueva lista con los libros añadidos al principio
     if (addedCount > 0) {
+      _finishedBooks = [...addedBooks.reversed, ..._finishedBooks];
       notifyListeners();
     }
 
