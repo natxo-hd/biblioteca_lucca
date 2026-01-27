@@ -752,7 +752,11 @@ class BookProvider extends ChangeNotifier {
   /// Añadir volúmenes anteriores de una serie como completados
   /// [baseBook] es el libro base con la info de la serie
   /// [volumeNumbers] es la lista de números de volumen a añadir
-  /// NOTA: Este método es RÁPIDO - añade libros sin portada y busca portadas en background
+  ///
+  /// Este método:
+  /// 1. Busca en Tomos y Grapas los ISBNs REALES de cada volumen
+  /// 2. Crea los libros con ISBN real y portada correcta
+  /// 3. Los volúmenes sin ISBN en T&G se crean con ISBN sintético y se buscan portadas después
   Future<int> addPreviousVolumesAsFinished(Book baseBook, List<int> volumeNumbers) async {
     int addedCount = 0;
     final seriesName = baseBook.seriesName ?? baseBook.title;
@@ -760,42 +764,88 @@ class BookProvider extends ChangeNotifier {
     // Detectar si es edición omnibus (ej: "ONE PIECE 3 EN 1")
     final isOmnibus = RegExp(r'\d+\s*[Ee][Nn]\s*1', caseSensitive: false).hasMatch(seriesName);
 
-    print('╔════════════════════════════════════════╗');
-    print('║ CREANDO VOLUMENES ANTERIORES (RÁPIDO)  ║');
-    print('╠════════════════════════════════════════╣');
-    print('║ Serie: $seriesName');
-    print('║ Omnibus: $isOmnibus');
-    print('║ Volúmenes: $volumeNumbers');
-    print('╚════════════════════════════════════════╝');
+    debugPrint('╔════════════════════════════════════════╗');
+    debugPrint('║ CREANDO VOLUMENES ANTERIORES           ║');
+    debugPrint('╠════════════════════════════════════════╣');
+    debugPrint('║ Serie: $seriesName');
+    debugPrint('║ Omnibus: $isOmnibus');
+    debugPrint('║ Volúmenes: $volumeNumbers');
+    debugPrint('╚════════════════════════════════════════╝');
 
-    // Lista de libros añadidos para buscar portadas después
+    // PASO 1: Buscar ISBNs reales en Tomos y Grapas
+    debugPrint('🔍 Buscando ISBNs reales en Tomos y Grapas...');
+    Map<int, Map<String, String>> seriesVolumes = {};
+    try {
+      seriesVolumes = await _tomosYGrapasClient.searchSeriesVolumes(seriesName);
+      debugPrint('📚 ISBNs encontrados para ${seriesVolumes.length} volúmenes');
+    } catch (e) {
+      debugPrint('⚠️ Error buscando en T&G, usando ISBNs sintéticos: $e');
+    }
+
+    // Lista de libros añadidos para buscar portadas después (solo los que no tienen)
+    final List<Book> booksNeedingCovers = [];
     final List<Book> addedBooks = [];
 
-    // PASO 1: Añadir todos los libros RÁPIDAMENTE sin portadas
+    // PASO 2: Crear libros con ISBN real o sintético
     for (final volNum in volumeNumbers) {
-      final syntheticIsbn = '${seriesName.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '-')}-vol-$volNum';
+      // Comprobar si tenemos datos reales de T&G para este volumen
+      final volumeData = seriesVolumes[volNum];
+      final hasRealData = volumeData != null && volumeData['isbn'] != null && volumeData['isbn']!.isNotEmpty;
 
-      // Verificar si ya existe
-      final existing = await _dbService.getBookByIsbn(syntheticIsbn);
-      if (existing != null) {
-        debugPrint('Volumen $volNum ya existe, saltando...');
+      String isbn;
+      String? coverUrl;
+      String? sourceUrl;
+      String volumeTitle;
+
+      if (hasRealData) {
+        // Usar datos reales de T&G
+        isbn = volumeData!['isbn']!;
+        coverUrl = volumeData['coverUrl'];
+        sourceUrl = volumeData['productUrl'];
+        volumeTitle = volumeData['title'] ?? (isOmnibus ? '$seriesName $volNum' : '$seriesName Vol. $volNum');
+        debugPrint('✅ Vol.$volNum: ISBN real $isbn');
+      } else {
+        // Usar ISBN sintético
+        isbn = '${seriesName.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '-')}-vol-$volNum';
+        volumeTitle = isOmnibus ? '$seriesName $volNum' : '$seriesName Vol. $volNum';
+        debugPrint('⚠️ Vol.$volNum: ISBN sintético (no encontrado en T&G)');
+      }
+
+      // Verificar si ya existe por ISBN
+      final existingByIsbn = await _dbService.getBookByIsbn(isbn);
+      if (existingByIsbn != null) {
+        debugPrint('📌 Vol.$volNum ya existe con ISBN $isbn, saltando...');
         continue;
       }
 
-      // Título: para omnibus usar "SERIE X" sin "Vol.", para normal usar "SERIE Vol. X"
-      final volumeTitle = isOmnibus ? '$seriesName $volNum' : '$seriesName Vol. $volNum';
+      // Verificar también por serie + número de volumen (evita duplicados)
+      final existingInSeries = await _dbService.getBookBySeriesAndVolume(seriesName, volNum);
+      if (existingInSeries != null) {
+        debugPrint('📌 Vol.$volNum ya existe en la serie, saltando...');
+        continue;
+      }
 
-      // Crear el libro SIN portada (se buscará en background)
+      // Descargar y guardar la portada localmente si tenemos URL
+      String? localCoverPath;
+      if (coverUrl != null && coverUrl.isNotEmpty) {
+        localCoverPath = await _imageStorage.downloadAndSave(coverUrl, isbn);
+      }
+
+      // Crear el libro
       final volumeBook = Book(
-        isbn: syntheticIsbn,
+        isbn: isbn,
         title: volumeTitle,
         author: baseBook.author,
-        coverUrl: null, // Sin portada por ahora
+        coverUrl: coverUrl,
+        localCoverPath: localCoverPath,
         status: 'finished',
         currentPage: 0,
         totalPages: baseBook.totalPages,
         seriesName: seriesName,
         volumeNumber: volNum,
+        publisher: baseBook.publisher,
+        apiSource: hasRealData ? 'tomosygrapas' : null,
+        sourceUrl: sourceUrl,
         pendingSync: !(_syncService?.isOnline ?? false),
       );
 
@@ -803,6 +853,11 @@ class BookProvider extends ChangeNotifier {
       final newBook = volumeBook.copyWith(id: id);
       addedBooks.add(newBook);
       addedCount++;
+
+      // Si no tiene portada, añadir a la lista para buscar después
+      if (coverUrl == null || coverUrl.isEmpty) {
+        booksNeedingCovers.add(newBook);
+      }
     }
 
     // Crear nueva lista con los libros añadidos al principio
@@ -811,10 +866,10 @@ class BookProvider extends ChangeNotifier {
       notifyListeners();
     }
 
-    // PASO 2: Buscar portadas EN BACKGROUND (no bloquea la UI)
-    if (addedBooks.isNotEmpty) {
-      // Ejecutar en background sin await
-      _searchCoversInBackground(addedBooks, baseBook);
+    // PASO 3: Buscar portadas EN BACKGROUND para los que no tienen (sin bloquear UI)
+    if (booksNeedingCovers.isNotEmpty) {
+      debugPrint('🔍 ${booksNeedingCovers.length} volúmenes sin portada, buscando en background...');
+      _searchCoversInBackground(booksNeedingCovers, baseBook);
     }
 
     return addedCount;

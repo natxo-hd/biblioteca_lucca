@@ -1243,6 +1243,218 @@ class TomosYGrapasClient {
     return volumeData?['coverUrl'];
   }
 
+  /// Busca todos los volúmenes de una serie por nombre
+  /// Devuelve un Map de volumeNumber -> {isbn, title, coverUrl, productUrl}
+  /// Esto permite obtener los ISBNs reales de cada volumen
+  Future<Map<int, Map<String, String>>> searchSeriesVolumes(String seriesName) async {
+    final volumes = <int, Map<String, String>>{};
+
+    debugPrint('╔════════════════════════════════════════╗');
+    debugPrint('║ BUSCANDO VOLÚMENES DE SERIE EN T&G     ║');
+    debugPrint('╠════════════════════════════════════════╣');
+    debugPrint('║ Serie: $seriesName');
+    debugPrint('╚════════════════════════════════════════╝');
+
+    // Detectar si es omnibus
+    final isOmnibus = RegExp(r'\d+\s*[Ee][Nn]\s*1', caseSensitive: false).hasMatch(seriesName);
+
+    // Generar queries de búsqueda
+    final queries = <String>[
+      seriesName,
+      // Si es omnibus, buscar también con formato estándar
+      if (isOmnibus) seriesName.replaceAll(RegExp(r'\s*\d+\s*[Ee][Nn]\s*1', caseSensitive: false), '').trim() + ' 3 en 1',
+    ];
+
+    // Conjunto para evitar URLs duplicadas
+    final visitedUrls = <String>{};
+
+    for (final query in queries) {
+      try {
+        debugPrint('TomosYGrapas: Buscando serie con query: "$query"');
+
+        final ajaxUrl = Uri.parse(
+          '$_baseUrl/es/module/leoproductsearch/productsearch?ajax=1&q=${Uri.encodeComponent(query)}',
+        );
+
+        final response = await http.get(
+          ajaxUrl,
+          headers: HttpConfig.ajaxHeaders,
+        ).timeout(const Duration(seconds: 15));
+
+        if (response.statusCode != 200) continue;
+
+        final data = json.decode(response.body) as Map<String, dynamic>;
+        final products = data['products'] as List<dynamic>?;
+
+        if (products == null || products.isEmpty) continue;
+
+        // Extraer nombre base de la serie para comparar
+        final seriesBase = seriesName.toLowerCase()
+            .replaceAll(RegExp(r'\s*\d+\s*en\s*1\s*', caseSensitive: false), ' ')
+            .replaceAll(RegExp(r'\s+'), ' ')
+            .trim();
+        final seriesWords = seriesBase.split(' ').where((w) => w.length > 2).take(3).toList();
+
+        for (final product in products) {
+          final productMap = product as Map<String, dynamic>;
+          final name = (productMap['name'] as String?)?.toLowerCase() ?? '';
+          final productUrl = productMap['url'] as String? ?? productMap['link'] as String?;
+
+          // Verificar que es de la misma serie
+          final matchesSeries = seriesWords.every((word) => name.contains(word));
+          if (!matchesSeries) continue;
+
+          // Verificar omnibus si es necesario
+          if (isOmnibus) {
+            final productHasOmnibus = RegExp(r'\d+\s*en\s*1', caseSensitive: false).hasMatch(name);
+            if (!productHasOmnibus) continue;
+          }
+
+          // Extraer número de volumen
+          final volInfo = _extractVolumeFromTitle(productMap['name'] as String? ?? '');
+          final volumeNumber = volInfo['volumeNumber'] as int?;
+
+          if (volumeNumber == null) continue;
+          if (volumes.containsKey(volumeNumber)) continue; // Ya tenemos este volumen
+
+          // Extraer cover URL
+          String? coverUrl;
+          if (productMap['cover'] != null) {
+            final cover = productMap['cover'] as Map<String, dynamic>;
+            if (cover['large'] != null) {
+              coverUrl = (cover['large'] as Map<String, dynamic>)['url'] as String?;
+            } else if (cover['bySize'] != null) {
+              final bySize = cover['bySize'] as Map<String, dynamic>;
+              coverUrl = (bySize['large_default'] as Map<String, dynamic>?)?['url'] as String?;
+            }
+          }
+
+          if (coverUrl != null) {
+            coverUrl = coverUrl.replaceAll('-home_default/', '-large_default/');
+            coverUrl = coverUrl.replaceAll('-medium_default/', '-large_default/');
+          }
+
+          // Si tenemos URL del producto, obtener ISBN de la página
+          if (productUrl != null && !visitedUrls.contains(productUrl)) {
+            visitedUrls.add(productUrl);
+            final isbn = await _fetchIsbnFromProductPage(productUrl);
+
+            if (isbn != null && isbn.isNotEmpty) {
+              volumes[volumeNumber] = {
+                'isbn': isbn,
+                'title': productMap['name'] as String? ?? '',
+                'coverUrl': coverUrl ?? '',
+                'productUrl': productUrl,
+              };
+              debugPrint('✅ Vol.$volumeNumber: ISBN=$isbn, Cover=${coverUrl != null ? "✓" : "✗"}');
+            }
+          }
+
+          // Pausa para no saturar el servidor
+          await Future.delayed(const Duration(milliseconds: 200));
+        }
+      } catch (e) {
+        debugPrint('TomosYGrapas searchSeriesVolumes error: $e');
+      }
+    }
+
+    debugPrint('📚 Total volúmenes encontrados con ISBN real: ${volumes.length}');
+    return volumes;
+  }
+
+  /// Obtiene el ISBN de una página de producto
+  Future<String?> _fetchIsbnFromProductPage(String productUrl) async {
+    try {
+      final response = await http.get(
+        Uri.parse(productUrl),
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36',
+          'Accept': 'text/html,application/xhtml+xml',
+          'Accept-Language': 'es-ES,es;q=0.9',
+        },
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode != 200) return null;
+
+      final html = response.body;
+
+      // Buscar ISBN en el data-product JSON
+      final dataProductMatch = RegExp(
+        r'data-product="([^"]*)"',
+        caseSensitive: false,
+      ).firstMatch(html);
+
+      if (dataProductMatch != null) {
+        try {
+          String jsonStr = dataProductMatch.group(1)!;
+          jsonStr = jsonStr
+              .replaceAll('&quot;', '"')
+              .replaceAll('&amp;', '&')
+              .replaceAll('&lt;', '<')
+              .replaceAll('&gt;', '>')
+              .replaceAll('&#039;', "'")
+              .replaceAll('&apos;', "'");
+
+          final productData = json.decode(jsonStr) as Map<String, dynamic>;
+
+          // Buscar ISBN/EAN en features
+          if (productData['features'] != null) {
+            final features = productData['features'] as List<dynamic>;
+            for (final feature in features) {
+              final featureMap = feature as Map<String, dynamic>;
+              final name = (featureMap['name'] as String?)?.toLowerCase() ?? '';
+              final value = featureMap['value'] as String?;
+
+              if ((name.contains('isbn') || name.contains('ean')) && value != null) {
+                // Limpiar el ISBN
+                final cleanIsbn = value.replaceAll(RegExp(r'[^0-9X]'), '');
+                if (cleanIsbn.length >= 10) {
+                  return cleanIsbn;
+                }
+              }
+            }
+          }
+
+          // Buscar en reference o ean del producto
+          if (productData['ean13'] != null) {
+            final ean = productData['ean13'] as String?;
+            if (ean != null && ean.length >= 10) return ean;
+          }
+          if (productData['reference'] != null) {
+            final ref = productData['reference'] as String?;
+            if (ref != null && ref.length >= 10) return ref;
+          }
+        } catch (e) {
+          debugPrint('Error parseando JSON para ISBN: $e');
+        }
+      }
+
+      // Fallback: buscar ISBN en el HTML con patrones
+      final isbnPatterns = [
+        RegExp(r'ISBN[:\s]*(\d{10,13})', caseSensitive: false),
+        RegExp(r'EAN[:\s]*(\d{13})', caseSensitive: false),
+        RegExp(r'978[-\s]?\d[-\s]?\d{2,5}[-\s]?\d{2,7}[-\s]?\d'),
+        RegExp(r'978\d{10}'),
+      ];
+
+      for (final pattern in isbnPatterns) {
+        final match = pattern.firstMatch(html);
+        if (match != null) {
+          final isbn = match.group(0)?.replaceAll(RegExp(r'[^0-9X]'), '') ??
+                       match.group(1)?.replaceAll(RegExp(r'[^0-9X]'), '');
+          if (isbn != null && isbn.length >= 10) {
+            return isbn;
+          }
+        }
+      }
+
+      return null;
+    } catch (e) {
+      debugPrint('Error obteniendo ISBN de $productUrl: $e');
+      return null;
+    }
+  }
+
   /// Verifica si el servicio está disponible
   Future<bool> testConnection() async {
     try {
