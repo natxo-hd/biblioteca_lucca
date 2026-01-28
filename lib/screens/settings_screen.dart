@@ -55,13 +55,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _checkForUpdates();
   }
 
-  Future<void> _checkForUpdates() async {
+  Future<void> _checkForUpdates({bool forceCheck = false}) async {
     if (_checkingUpdate) return;
 
     setState(() => _checkingUpdate = true);
 
     try {
-      final update = await _updateService.checkForUpdate();
+      final update = await _updateService.checkForUpdate(forceCheck: forceCheck);
       if (mounted) {
         setState(() {
           _availableUpdate = update;
@@ -410,7 +410,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         if (!_checkingUpdate)
           TextButton(
-            onPressed: () => _checkForUpdates(),
+            onPressed: () => _checkForUpdates(forceCheck: true),
             child: Text(
               'COMPROBAR',
               style: GoogleFonts.bangers(
