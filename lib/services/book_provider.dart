@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/book.dart';
 import '../constants/translations.dart';
 import 'database_service.dart';
@@ -10,6 +11,7 @@ import 'comic_search_service.dart';
 import 'comic_type_detector.dart';
 import 'api/tomosygrapas_client.dart';
 import 'image_storage_service.dart';
+import 'new_volume_checker_service.dart';
 
 class BookProvider extends ChangeNotifier {
   final DatabaseService _dbService = DatabaseService();
@@ -32,6 +34,7 @@ class BookProvider extends ChangeNotifier {
   List<Book> _archivedBooks = [];
   bool _isLoading = false;
   bool _isSyncing = false;
+  List<NewVolumeAlert> _newVolumeAlerts = [];
 
   List<Book> get readingBooks => _readingBooks;
   List<Book> get finishedBooks => _finishedBooks;
@@ -40,6 +43,7 @@ class BookProvider extends ChangeNotifier {
   bool get isLoading => _isLoading;
   bool get isSyncing => _isSyncing;
   bool get isOnline => _syncService?.isOnline ?? false;
+  List<NewVolumeAlert> get newVolumeAlerts => _newVolumeAlerts;
 
   // Actualizar servicios cuando cambian
   void updateServices(AuthService authService, SyncService syncService) {
@@ -432,7 +436,7 @@ class BookProvider extends ChangeNotifier {
     final index = _readingBooks.indexWhere((b) => b.id == bookId);
     if (index != -1) {
       final book = _readingBooks[index].copyWith(currentPage: page);
-      _readingBooks[index] = book;
+      _readingBooks = List.from(_readingBooks)..[index] = book;
       notifyListeners();
 
       // Sincronizar cambio si hay conexión
@@ -447,14 +451,14 @@ class BookProvider extends ChangeNotifier {
     var index = _readingBooks.indexWhere((b) => b.id == bookId);
     if (index != -1) {
       final book = _readingBooks[index].copyWith(totalPages: totalPages);
-      _readingBooks[index] = book;
+      _readingBooks = List.from(_readingBooks)..[index] = book;
       notifyListeners();
       _syncBookChange(book);
     } else {
       index = _finishedBooks.indexWhere((b) => b.id == bookId);
       if (index != -1) {
         final book = _finishedBooks[index].copyWith(totalPages: totalPages);
-        _finishedBooks[index] = book;
+        _finishedBooks = List.from(_finishedBooks)..[index] = book;
         notifyListeners();
         _syncBookChange(book);
       }
@@ -989,10 +993,11 @@ class BookProvider extends ChangeNotifier {
       if (coverUrl != null && coverUrl.isNotEmpty && book.id != null) {
         await _dbService.updateCoverUrl(book.id!, coverUrl);
 
-        // Actualizar en la lista local
+        // Actualizar en la lista local (crear nueva lista para que Selector detecte cambio)
         final index = _finishedBooks.indexWhere((b) => b.id == book.id);
         if (index != -1) {
-          _finishedBooks[index] = _finishedBooks[index].copyWith(coverUrl: coverUrl);
+          _finishedBooks = List.from(_finishedBooks)
+            ..[index] = _finishedBooks[index].copyWith(coverUrl: coverUrl);
         }
 
         // Sincronizar con Firebase si hay conexión
@@ -1038,5 +1043,46 @@ class BookProvider extends ChangeNotifier {
     }
 
     return bookWithSeries;
+  }
+
+  // ============ COMPROBACIÓN DE VOLÚMENES NUEVOS ============
+
+  /// Comprobar volúmenes nuevos al abrir la app (máximo 1 vez cada 24h)
+  Future<void> checkForNewVolumesOnStartup() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final lastCheck = prefs.getString('last_new_volume_check');
+      if (lastCheck != null) {
+        final lastDate = DateTime.tryParse(lastCheck);
+        if (lastDate != null &&
+            DateTime.now().difference(lastDate).inHours < 24) {
+          debugPrint('NewVolumeCheck: Ya se comprobó hoy, omitiendo');
+          return;
+        }
+      }
+
+      debugPrint('NewVolumeCheck: Iniciando comprobación de volúmenes nuevos');
+
+      final checker = NewVolumeCheckerService();
+      await checker.init();
+      final alerts =
+          await checker.checkForNewVolumes(_readingBooks, _finishedBooks);
+
+      if (alerts.isNotEmpty) {
+        _newVolumeAlerts = alerts;
+        notifyListeners();
+      }
+
+      await prefs.setString(
+          'last_new_volume_check', DateTime.now().toIso8601String());
+    } catch (e) {
+      debugPrint('NewVolumeCheck: Error: $e');
+    }
+  }
+
+  /// Limpiar alertas de volúmenes nuevos
+  void clearNewVolumeAlerts() {
+    _newVolumeAlerts = [];
+    notifyListeners();
   }
 }

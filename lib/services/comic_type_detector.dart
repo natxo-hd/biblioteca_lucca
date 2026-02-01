@@ -536,6 +536,38 @@ class ComicTypeDetector {
     return ComicType.unknown;
   }
 
+  /// Refina el tipo detectado por ISBN usando titulo y publisher.
+  ///
+  /// Soluciona el problema de que ISBN 97884 (espanol) enruta incorrectamente
+  /// ediciones espanolas de comics internacionales. Ejemplo:
+  /// - ISBN 97884 + titulo "Batman" -> ComicType.dc (no spanish)
+  /// - ISBN 97884 + publisher "Panini Marvel" -> ComicType.marvel (no spanish)
+  static ComicType refineType(ComicType isbnType, String? title, String? publisher) {
+    // Solo refinar si el ISBN dice "spanish"
+    if (isbnType != ComicType.spanish) {
+      return isbnType;
+    }
+
+    // Prioridad 1: Publisher (mas fiable)
+    if (publisher != null && publisher.isNotEmpty) {
+      final fromPublisher = detectFromPublisher(publisher);
+      if (fromPublisher != ComicType.unknown && fromPublisher != ComicType.spanish) {
+        return fromPublisher;
+      }
+    }
+
+    // Prioridad 2: Titulo
+    if (title != null && title.isNotEmpty) {
+      final fromTitle = detectFromTitle(title);
+      if (fromTitle != ComicType.unknown && fromTitle != ComicType.spanish) {
+        return fromTitle;
+      }
+    }
+
+    // Sin refinamiento posible, mantener spanish
+    return isbnType;
+  }
+
   /// Obtiene una descripción legible del tipo de cómic
   static String getTypeName(ComicType type) {
     switch (type) {

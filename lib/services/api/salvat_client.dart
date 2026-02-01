@@ -78,13 +78,28 @@ class SalvatClient {
     return simple;
   }
 
+  /// Detecta la categoria de Salvat mas probable para un query dado
+  String? _detectCategory(String query) {
+    final lower = query.toLowerCase();
+    for (final entry in _knownCategories.entries) {
+      if (lower.contains(entry.key)) {
+        return entry.value;
+      }
+    }
+    return null;
+  }
+
   /// Busca un producto en Salvat y devuelve la URL del producto
   Future<String?> _searchProduct(String query, {int? volumeNumber}) async {
     try {
+      // Detectar categoria para filtrar resultados y refinar busqueda
+      final category = _detectCategory(query);
       final encodedQuery = Uri.encodeComponent(query);
-      final searchUrl = Uri.parse(
-        '$_baseUrl/mod/iqitsearch/searchiqit?s=$encodedQuery',
-      );
+
+      // Si detectamos categoria, anadirla como parametro de busqueda
+      final searchUrl = category != null
+          ? Uri.parse('$_baseUrl/mod/iqitsearch/searchiqit?s=$encodedQuery&comics-y-libros=$category')
+          : Uri.parse('$_baseUrl/mod/iqitsearch/searchiqit?s=$encodedQuery');
 
       debugPrint('Salvat: Buscando en $searchUrl');
 
@@ -100,17 +115,18 @@ class SalvatClient {
 
       final html = response.body;
 
-      // Buscar URLs de productos en los resultados
-      // Patrón: href="https://www.salvat.com/coleccion-vertigo/nombre-id"
+      // Buscar URLs de productos en TODAS las categorias conocidas
+      // Construir patron dinamico con todas las categorias
+      final categoryPattern = _knownCategories.values.toSet().join('|');
       final productUrlPattern = RegExp(
-        r'href="(https://www\.salvat\.com/coleccion-vertigo/[^"]*-\d+)"',
+        r'href="(https://www\.salvat\.com/(?:' + categoryPattern + r')/[^"]*-\d+)"',
         caseSensitive: false,
       );
 
       final matches = productUrlPattern.allMatches(html);
       final allUrls = matches.map((m) => m.group(1)).whereType<String>().toSet().toList();
 
-      debugPrint('Salvat: Encontrados ${allUrls.length} productos de Vertigo');
+      debugPrint('Salvat: Encontrados ${allUrls.length} productos');
 
       if (allUrls.isEmpty) return null;
 

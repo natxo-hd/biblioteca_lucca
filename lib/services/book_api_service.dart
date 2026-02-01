@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../models/book.dart';
+import '../utils/volume_extractor.dart';
+import '../utils/query_generator.dart';
 import 'api/tomosygrapas_client.dart';
 import 'api/comicvine_api_client.dart';
 
@@ -230,80 +232,15 @@ class BookApiService {
     }
   }
 
-  // Extraer información de volumen específica para manga
+  // Extraer información de volumen (delegado a VolumeExtractor)
+  // Acepta title y subtitle opcionales para compatibilidad con Google Books
   Map<String, dynamic> _extractMangaVolume(String title, String? subtitle) {
-    // Patrones comunes en manga español
-    // "One Piece 3 en 1 nº 10", "One Piece 3 en 1 10", "Dragon Ball Super nº 5", etc.
     final textToSearch = subtitle != null ? '$title $subtitle' : title;
-
-    // Patrón especial para "X en 1" (omnibus) - el volumen es el ÚLTIMO número
-    // Ej: "ONE PIECE 3 EN 1 10" -> serie: "ONE PIECE 3 EN 1", volumen: 10
-    final omnibusPattern = RegExp(r'^(.+\d+\s*en\s*1)\s+(\d+)$', caseSensitive: false);
-    final omnibusMatch = omnibusPattern.firstMatch(textToSearch.trim());
-    if (omnibusMatch != null) {
-      final seriesName = omnibusMatch.group(1)?.trim();
-      final vol = int.tryParse(omnibusMatch.group(2) ?? '');
-      if (seriesName != null && vol != null) {
-        debugPrint('Omnibus detectado: serie="$seriesName", vol=$vol');
-        return {
-          'seriesName': seriesName,
-          'volumeNumber': vol,
-        };
-      }
-    }
-
-    // Otros patrones comunes
-    final patterns = [
-      // "nº X" o "n° X" - muy común en manga español
-      RegExp(r'[nN][ºo°]\s*(\d+)', caseSensitive: false),
-      // "X en 1 nº Y" - omnibus con nº
-      RegExp(r'(\d+)\s*en\s*1\s*[nN][ºo°]\s*(\d+)', caseSensitive: false),
-      // "Vol. X" o "Volumen X"
-      RegExp(r'[Vv]ol(?:umen|\.?)?\s*(\d+)', caseSensitive: false),
-      // "#X"
-      RegExp(r'#\s*(\d+)'),
-      // Número al final (último recurso)
-      RegExp(r'\s(\d+)$'),
-    ];
-
-    for (final pattern in patterns) {
-      final match = pattern.firstMatch(textToSearch);
-      if (match != null) {
-        // Para el patrón "3 en 1 nº X", el volumen está en el segundo grupo
-        int? vol;
-        if (match.groupCount >= 2 && match.group(2) != null) {
-          vol = int.tryParse(match.group(2)!);
-        }
-        vol ??= int.tryParse(match.group(1) ?? '');
-
-        if (vol != null) {
-          // Extraer nombre de la serie (quitar el número y patrones)
-          String seriesName = title
-              .replaceAll(RegExp(r'\s*[nN][ºo°]\s*\d+'), '')
-              .replaceAll(RegExp(r'\s*\d+\s*en\s*1\s*\d*'), '') // Limpiar "X en 1" y posible número
-              .replaceAll(RegExp(r'\s*[Vv]ol(?:umen|\.?)?\s*\d+'), '')
-              .replaceAll(RegExp(r'\s*#\s*\d+'), '')
-              .replaceAll(RegExp(r'\s+\d+$'), '')
-              .trim();
-
-          // Si la serie quedó vacía o es solo "3 en 1", intentar extraer mejor
-          if (seriesName.isEmpty || RegExp(r'^\d+\s*en\s*1$', caseSensitive: false).hasMatch(seriesName)) {
-            // Buscar el nombre antes del patrón omnibus
-            final nameMatch = RegExp(r'^(.+?)\s+\d+\s*en\s*1', caseSensitive: false).firstMatch(title);
-            if (nameMatch != null) {
-              seriesName = nameMatch.group(1)?.trim() ?? title;
-            }
-          }
-
-          return {
-            'seriesName': seriesName.isNotEmpty ? seriesName : title,
-            'volumeNumber': vol,
-          };
-        }
-      }
-    }
-
-    return {'seriesName': title, 'volumeNumber': null};
+    final info = VolumeExtractor.extractFromTitle(textToSearch);
+    return {
+      'seriesName': info.seriesName.isNotEmpty ? info.seriesName : title,
+      'volumeNumber': info.volumeNumber,
+    };
   }
 
   // Extraer volumen de campos adicionales de Google Books
@@ -527,66 +464,15 @@ class BookApiService {
     }
   }
 
-  // Extraer nombre de serie y número de volumen del título
+  // Extraer nombre de serie y número de volumen del título (delegado a VolumeExtractor)
   Map<String, dynamic> _extractVolumeFromTitle(String title) {
-    debugPrint('=== _extractVolumeFromTitle ===');
-    debugPrint('INPUT title: "$title"');
-    debugPrint('title.trim(): "${title.trim()}"');
-    debugPrint('title bytes: ${title.codeUnits}');
-
-    // Patrones comunes de series:
-    // - "Titulo Vol. 1", "Titulo Volume 1"
-    // - "Titulo #1", "Titulo nº 1", "Titulo n° 1"
-    // - "Titulo 1", "Titulo (1)"
-    // - "Titulo: Libro 1", "Titulo: Parte 1"
-    // - "Titulo Tomo 1"
-    // - "Titulo 3 en 1 10" (omnibus)
-
-    // PRIMERO: Detectar patrón omnibus "X en 1 Y" donde Y es el volumen
-    // Ej: "ONE PIECE 3 EN 1 10" -> serie: "ONE PIECE 3 EN 1", volumen: 10
-    final omnibusPattern = RegExp(r'^(.+\d+\s*en\s*1)\s+(\d+)$', caseSensitive: false);
-    final omnibusMatch = omnibusPattern.firstMatch(title.trim());
-    debugPrint('omnibusPattern match: ${omnibusMatch != null}');
-    if (omnibusMatch != null) {
-      final seriesName = omnibusMatch.group(1)?.trim();
-      final vol = int.tryParse(omnibusMatch.group(2) ?? '');
-      if (seriesName != null && vol != null) {
-        debugPrint('Omnibus detectado en _extractVolumeFromTitle: serie="$seriesName", vol=$vol');
-        return {
-          'seriesName': seriesName,
-          'volumeNumber': vol,
-        };
-      }
+    final info = VolumeExtractor.extractFromTitle(title);
+    if (info.volumeNumber != null) {
+      return {
+        'seriesName': info.seriesName,
+        'volumeNumber': info.volumeNumber,
+      };
     }
-
-    final patterns = [
-      RegExp(r'^(.+?)\s*[Vv]ol(?:ume|\.?)?\s*(\d+)', caseSensitive: false),
-      RegExp(r'^(.+?)\s*#\s*(\d+)'),
-      RegExp(r'^(.+?)\s*[Nn][º°]\s*(\d+)'),
-      RegExp(r'^(.+?)\s*[Tt]omo\s*(\d+)', caseSensitive: false),
-      RegExp(r'^(.+?):\s*[Ll]ibro\s*(\d+)', caseSensitive: false),
-      RegExp(r'^(.+?):\s*[Pp]arte\s*(\d+)', caseSensitive: false),
-      RegExp(r'^(.+?)\s*\((\d+)\)\s*$'),
-      RegExp(r'^(.+?)\s+(\d+)\s*$'),
-    ];
-
-    for (final pattern in patterns) {
-      final match = pattern.firstMatch(title);
-      if (match != null) {
-        final seriesName = match.group(1)?.trim();
-        final volumeStr = match.group(2);
-        if (seriesName != null && volumeStr != null) {
-          final volumeNumber = int.tryParse(volumeStr);
-          if (volumeNumber != null) {
-            return {
-              'seriesName': seriesName,
-              'volumeNumber': volumeNumber,
-            };
-          }
-        }
-      }
-    }
-
     return {};
   }
 
@@ -750,10 +636,10 @@ class BookApiService {
     final volumeNumber = volInfo['volumeNumber'] as int?;
     debugPrint('seriesName final: "$seriesName", volumeNumber: $volumeNumber');
 
-    // Detectar omnibus y extraer nombre base
-    final omnibusMatch = RegExp(r'^(.+?)\s*(\d+)\s*[Ee][Nn]\s*1', caseSensitive: false).firstMatch(seriesName);
-    final isOmnibus = omnibusMatch != null;
-    final baseSeriesName = omnibusMatch?.group(1)?.trim();
+    // Detectar omnibus usando VolumeExtractor
+    final titleVolInfo = VolumeExtractor.extractFromTitle(title);
+    final isOmnibus = titleVolInfo.isOmnibus;
+    final baseSeriesName = titleVolInfo.baseSeriesName;
 
     if (isOmnibus) {
       debugPrint('📚 Omnibus detectado: serie="$seriesName", base="$baseSeriesName", vol=$volumeNumber');
@@ -804,29 +690,13 @@ class BookApiService {
     }
 
     // 3. Intentar encontrar el ISBN en Google Books para usar Casa del Libro
-    final searchQueries = <String>[
+    final searchQueries = QueryGenerator.forGoogleBooks(
       title,
-      '$title $author',
-      '$title planeta',
-      '$title manga planeta',
-    ];
-
-    // Para omnibus, añadir queries MUY específicas
-    if (isOmnibus && baseSeriesName != null && volumeNumber != null) {
-      // Formato común: "ONE PIECE 3 EN 1 Nº 05" o "ONE PIECE 3 EN 1 5"
-      final volPadded = volumeNumber.toString().padLeft(2, '0');
-      searchQueries.insertAll(0, [
-        // Formatos exactos de Planeta Cómic
-        '$baseSeriesName 3 en 1 nº $volPadded',
-        '$baseSeriesName 3 en 1 $volPadded',
-        '$baseSeriesName 3 en 1 $volumeNumber planeta',
-        '$baseSeriesName 3 en 1 vol $volumeNumber',
-        // Sin espacios alrededor de "en"
-        '${baseSeriesName}3en1 $volumeNumber',
-        // Nombre inglés + omnibus
-        '${baseSeriesName.toLowerCase()} omnibus vol $volumeNumber',
-      ]);
-    }
+      author,
+      isOmnibus: isOmnibus,
+      baseSeriesName: baseSeriesName,
+      volumeNumber: volumeNumber,
+    );
 
     for (final query in searchQueries) {
       try {
@@ -1193,11 +1063,48 @@ class BookApiService {
 
   // Buscar portada por ISBN - devuelve URL de Casa del Libro (más fiable para España)
   Future<String?> searchCoverByIsbn(String isbn) async {
-    // Casa del Libro tiene portadas de la mayoría de libros españoles
-    // Usamos la URL directamente sin verificar para evitar latencia
     final casaDelLibroUrl = _buildCasaDelLibroCoverUrl(isbn);
     debugPrint('URL portada Casa del Libro: $casaDelLibroUrl');
-    return casaDelLibroUrl;
+
+    // Validar que la URL devuelve una imagen real (evita imagenes rotas)
+    if (await _validateCoverUrl(casaDelLibroUrl)) {
+      return casaDelLibroUrl;
+    }
+
+    debugPrint('Casa del Libro: URL no valida, descartando');
+    return null;
+  }
+
+  /// Valida que una URL de portada devuelve una imagen real.
+  /// Hace un HEAD request y verifica status 200 + content-length > 1000.
+  Future<bool> _validateCoverUrl(String url) async {
+    try {
+      final response = await http.head(
+        Uri.parse(url),
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36',
+        },
+      ).timeout(const Duration(seconds: 5));
+
+      if (response.statusCode != 200) {
+        debugPrint('Cover validation: status ${response.statusCode} for $url');
+        return false;
+      }
+
+      // Verificar que tiene contenido suficiente (imagenes placeholder son muy pequenas)
+      final contentLength = int.tryParse(
+        response.headers['content-length'] ?? '',
+      );
+      if (contentLength != null && contentLength < 1000) {
+        debugPrint('Cover validation: content too small ($contentLength bytes) for $url');
+        return false;
+      }
+
+      return true;
+    } catch (e) {
+      debugPrint('Cover validation error for $url: $e');
+      return false;
+    }
   }
 
   // Buscar información del libro en Casa del Libro (más fiable para manga español)

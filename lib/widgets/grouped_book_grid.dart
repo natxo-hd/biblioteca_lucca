@@ -8,6 +8,7 @@ import '../services/book_provider.dart';
 import '../services/book_api_service.dart';
 import '../services/parent_settings_service.dart';
 import '../services/email_service.dart';
+import '../services/new_volume_checker_service.dart';
 import 'book_card.dart';
 import 'series_header.dart';
 import 'alphabet_index.dart';
@@ -151,13 +152,17 @@ class _GroupedBookGridState extends State<GroupedBookGrid> {
   bool? _nextVolumeExists(String series, int nextVol) {
     final seriesLower = series.toLowerCase().trim();
 
-    // Buscar en la base de datos de series conocidas
+    // 1. Buscar en la base de datos estatica de series conocidas
     for (final entry in _knownSeriesVolumes.entries) {
       if (seriesLower.contains(entry.key) || entry.key.contains(seriesLower)) {
         // Si tenemos datos de esta serie, verificar si nextVol excede el máximo
         return nextVol <= entry.value;
       }
     }
+
+    // 2. Buscar en cache dinámico del NewVolumeCheckerService
+    final cachedResult = NewVolumeCheckerService().getCachedResult(series, nextVol);
+    if (cachedResult != null) return cachedResult;
 
     // No tenemos datos de esta serie
     return null;

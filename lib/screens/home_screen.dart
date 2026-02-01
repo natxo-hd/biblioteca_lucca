@@ -3,8 +3,10 @@ import 'package:provider/provider.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../models/book.dart';
 import '../services/book_provider.dart';
+import '../services/new_volume_checker_service.dart';
 import '../widgets/book_grid.dart';
 import '../widgets/grouped_book_grid.dart';
+import '../widgets/new_volumes_alert_dialog.dart';
 import '../theme/comic_theme.dart';
 import 'scanner_screen.dart';
 import 'settings_screen.dart';
@@ -45,8 +47,15 @@ class _HomeScreenState extends State<HomeScreen>
       curve: Curves.easeOutCubic,
     );
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<BookProvider>().loadBooks();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final provider = context.read<BookProvider>();
+      await provider.loadBooks();
+      // Comprobar volúmenes nuevos en segundo plano (máximo 1 vez cada 24h)
+      await provider.checkForNewVolumesOnStartup();
+      if (mounted && provider.newVolumeAlerts.isNotEmpty) {
+        _showNewVolumeSnackBar(provider.newVolumeAlerts);
+        provider.clearNewVolumeAlerts();
+      }
     });
   }
 
@@ -213,6 +222,84 @@ class _HomeScreenState extends State<HomeScreen>
       bottomNavigationBar: _buildBottomNav(),
       floatingActionButton: _buildFAB(),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
+    );
+  }
+
+  void _showNewVolumeSnackBar(List<NewVolumeAlert> alerts) {
+    final message = alerts.length == 1
+        ? '${alerts.first.seriesName} Vol. ${alerts.first.newVolumeNumber} ya disponible!'
+        : '${alerts.length} volúmenes nuevos disponibles!';
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          message,
+          style: GoogleFonts.comicNeue(
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+          ),
+        ),
+        backgroundColor: ComicTheme.secondaryBlue,
+        duration: const Duration(seconds: 5),
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 80),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        action: SnackBarAction(
+          label: 'VER',
+          textColor: Colors.white,
+          onPressed: () {
+            showNewVolumesAlertDialog(
+              context,
+              alerts,
+              _handleNewVolumeAction,
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  void _handleNewVolumeAction(NewVolumeAlert alert, String action) {
+    final provider = context.read<BookProvider>();
+    final nextVolumeNumber = alert.newVolumeNumber;
+    final seriesName = alert.seriesName;
+    final isOmnibus =
+        RegExp(r'\d+\s*[Ee][Nn]\s*1').hasMatch(seriesName);
+    final nextTitle = isOmnibus
+        ? '$seriesName $nextVolumeNumber'
+        : '$seriesName Vol. $nextVolumeNumber';
+    final syntheticIsbn =
+        '${seriesName.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '-')}-vol-$nextVolumeNumber';
+
+    final status = action == 'have_it' ? 'reading' : 'wishlist';
+
+    final nextBook = Book(
+      isbn: syntheticIsbn,
+      title: nextTitle,
+      author: alert.author,
+      coverUrl: alert.coverUrl,
+      status: status,
+      currentPage: 0,
+      totalPages: 0,
+      seriesName: seriesName,
+      volumeNumber: nextVolumeNumber,
+    );
+
+    provider.addBook(nextBook);
+
+    final statusMsg = action == 'have_it' ? 'Leyendo' : 'Solicitados';
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          '$nextTitle añadido a $statusMsg',
+          style: GoogleFonts.comicNeue(fontWeight: FontWeight.bold),
+        ),
+        backgroundColor: ComicTheme.powerGreen,
+        duration: const Duration(seconds: 3),
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 80),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
     );
   }
 

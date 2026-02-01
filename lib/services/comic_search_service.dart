@@ -2,6 +2,8 @@ import 'package:flutter/foundation.dart';
 import '../models/book.dart';
 import '../config/api_keys.dart';
 import '../constants/translations.dart';
+import '../utils/volume_extractor.dart';
+import '../utils/query_generator.dart';
 import 'comic_type_detector.dart';
 import 'api_cache_service.dart';
 import 'api/marvel_api_client.dart';
@@ -55,7 +57,7 @@ class ComicSearchService {
     debugPrint('=== ComicSearchService: Buscando ISBN $isbn ===');
 
     // Detectar tipo de cómic por ISBN
-    final comicType = ComicTypeDetector.detectFromIsbn(isbn);
+    var comicType = ComicTypeDetector.detectFromIsbn(isbn);
     debugPrint('Tipo detectado por ISBN: ${ComicTypeDetector.getTypeName(comicType)}');
 
     // Obtener prioridad de fuentes según el tipo
@@ -81,6 +83,19 @@ class ComicSearchService {
     }
 
     if (result != null) {
+      // Refinar tipo usando titulo/publisher del resultado encontrado.
+      // Esto corrige ediciones espanolas de comics internacionales
+      // (ej: Batman con ISBN 97884 -> dc en vez de spanish)
+      final refinedType = ComicTypeDetector.refineType(
+        comicType,
+        result.title,
+        result.publisher,
+      );
+      if (refinedType != comicType) {
+        debugPrint('Tipo refinado: ${ComicTypeDetector.getTypeName(comicType)} -> ${ComicTypeDetector.getTypeName(refinedType)}');
+        comicType = refinedType;
+      }
+
       debugPrint('=== Antes de _enrichBook ===');
       debugPrint('seriesName: ${result.seriesName}');
 
@@ -238,16 +253,17 @@ class ComicSearchService {
 
     debugPrint('Buscando portada para: $title (vol: $volumeNumber)');
 
-    final comicType = ComicTypeDetector.detectFromTitle(title);
+    // Detectar tipo y refinar (ediciones espanolas de comics internacionales)
+    final rawType = ComicTypeDetector.detectFromTitle(title);
+    final comicType = ComicTypeDetector.refineType(rawType, title, null);
     final englishTitle = _translateToEnglish(title);
 
-    // Detectar si es edición omnibus (ej: "ONE PIECE 3 EN 1")
-    final omnibusMatch = RegExp(r'(.+?)\s*(\d+)\s*[Ee][Nn]\s*1', caseSensitive: false).firstMatch(title);
-    final isOmnibus = omnibusMatch != null;
-    String? baseSeriesName;
+    // Detectar si es edición omnibus usando VolumeExtractor
+    final volInfo = VolumeExtractor.extractFromTitle(title);
+    final isOmnibus = volInfo.isOmnibus;
+    final baseSeriesName = volInfo.baseSeriesName;
     if (isOmnibus) {
-      baseSeriesName = omnibusMatch.group(1)?.trim();
-      debugPrint('📚 Omnibus detectado: base="$baseSeriesName"');
+      debugPrint('Omnibus detectado: base="$baseSeriesName"');
     }
 
     // Priorizar según tipo
@@ -369,21 +385,20 @@ class ComicSearchService {
         return tomosYGrapasCover;
       }
 
-      // Fallback: queries manuales para otras fuentes
-      final volPadded = volumeNumber.toString().padLeft(2, '0');
-      final omnibusQueries = [
-        '$baseSeriesName 3 en 1 $volPadded',
-        '$baseSeriesName 3 en 1 $volumeNumber',
-        '$baseSeriesName omnibus $volumeNumber',
-        if (englishTitle != null) '$englishTitle 3 in 1 $volumeNumber',
-        if (englishTitle != null) '$englishTitle omnibus $volumeNumber',
-      ];
+      // Fallback: queries generadas para otras fuentes
+      final omnibusQueries = QueryGenerator.forCover(
+        volInfo.seriesName,
+        volumeNumber,
+        englishTitle: englishTitle,
+        isOmnibus: true,
+        baseSeriesName: baseSeriesName,
+      );
 
       for (final query in omnibusQueries) {
-        debugPrint('🔍 Omnibus fallback query: $query');
+        debugPrint('Omnibus fallback query: $query');
         final cover = await _bookApiService.searchCover(query, author);
         if (cover != null && cover.isNotEmpty) {
-          debugPrint('✅ Portada omnibus encontrada con: $query');
+          debugPrint('Portada omnibus encontrada con: $query');
           return cover;
         }
       }

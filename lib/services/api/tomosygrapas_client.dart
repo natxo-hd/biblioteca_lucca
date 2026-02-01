@@ -3,6 +3,8 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../../models/book.dart';
 import '../../config/http_config.dart';
+import '../../utils/volume_extractor.dart';
+import '../../utils/query_generator.dart';
 
 /// Cliente para Tomos y Grapas - Tienda española de cómics/manga
 /// Excelente fuente para manga español con datos completos:
@@ -382,78 +384,15 @@ class TomosYGrapasClient {
     return null;
   }
 
-  /// Extrae el número de volumen del título
+  /// Extrae el número de volumen del título (delegado a VolumeExtractor)
   Map<String, dynamic> _extractVolumeFromTitle(String title) {
-    String? seriesName;
-    int? volumeNumber;
-
-    // PRIMERO: Detectar patrón omnibus "X en 1 Y" donde Y es el volumen real
-    // Ej: "ONE PIECE 3 EN 1 10" -> serie: "ONE PIECE 3 EN 1", volumen: 10
-    final omnibusPattern = RegExp(r'^(.+\d+\s*[Ee][Nn]\s*1)\s+(\d+)\s*$');
-    final omnibusMatch = omnibusPattern.firstMatch(title.trim());
-    if (omnibusMatch != null) {
-      seriesName = omnibusMatch.group(1)?.trim();
-      volumeNumber = int.tryParse(omnibusMatch.group(2) ?? '');
-      if (seriesName != null && volumeNumber != null) {
-        debugPrint('TomosYGrapas: Omnibus detectado: serie="$seriesName", vol=$volumeNumber');
-        return {
-          'seriesName': seriesName,
-          'volumeNumber': volumeNumber,
-        };
-      }
+    final info = VolumeExtractor.extractFromTitle(title);
+    if (info.volumeNumber != null) {
+      debugPrint('TomosYGrapas: Volumen extraído: ${info.volumeNumber} de "$title"');
     }
-
-    // Patrones comunes en títulos españoles
-    final patterns = [
-      // "GREEN BLOOD 02 (DE 5)" o "SERIE 05 (DE 10)"
-      RegExp(r'^(.+?)\s+(\d{1,3})\s*\((?:DE|de)\s*\d+\)', caseSensitive: false),
-      // "RADIANT BLACK 02: TEAM-UP" o "SERIE 05: SUBTITULO"
-      RegExp(r'^(.+?)\s+(\d{1,3})[\s:]+[A-Z]', caseSensitive: false),
-      // "SERIE 02 - SUBTITULO" (número seguido de guión)
-      RegExp(r'^(.+?)\s+(\d{1,3})\s*[-–—]', caseSensitive: false),
-      // "MASSIVE-VERSE: RADIANT BLACK 02" (número al final después de nombre)
-      RegExp(r'^(?:MASSIVE-VERSE:\s*)?(.+?)\s+(\d{1,3})\s*$'),
-      // "ONE PIECE 3 EN 1 10" -> serie: ONE PIECE 3 EN 1, vol: 10
-      RegExp(r'^(.+?)\s+(\d+)\s*$'),
-      // "NARUTO Nº 10"
-      RegExp(r'^(.+?)\s*[Nn][ºo°]\s*(\d+)', caseSensitive: false),
-      // "DRAGON BALL VOL. 10"
-      RegExp(r'^(.+?)\s*[Vv]ol\.?\s*(\d+)'),
-      // "SERIE #10"
-      RegExp(r'^(.+?)\s*#\s*(\d+)'),
-      // "SERIE TOMO 10" o "SERIE T.10"
-      RegExp(r'^(.+?)\s*[Tt](?:omo)?\.?\s*(\d+)'),
-    ];
-
-    for (final pattern in patterns) {
-      final match = pattern.firstMatch(title);
-      if (match != null) {
-        seriesName = match.group(1)?.trim();
-        volumeNumber = int.tryParse(match.group(2) ?? '');
-        if (volumeNumber != null) {
-          debugPrint('TomosYGrapas: Volumen extraído: $volumeNumber de "$title"');
-          break;
-        }
-      }
-    }
-
-    // Limpiar nombre de serie
-    if (seriesName != null) {
-      seriesName = seriesName
-          // Quitar prefijos comunes
-          .replaceAll(RegExp(r'^MASSIVE-VERSE:\s*', caseSensitive: false), '')
-          // Quitar "(DE X)" o "(de X)" al final
-          .replaceAll(RegExp(r'\s*\((?:DE|de)\s*\d+\)\s*$', caseSensitive: false), '')
-          // Quitar números de volumen sueltos al final (ej: "SERIE 02" -> "SERIE")
-          .replaceAll(RegExp(r'\s+\d{1,3}\s*$'), '')
-          .trim();
-
-      debugPrint('TomosYGrapas: Serie limpia: "$seriesName"');
-    }
-
     return {
-      'seriesName': seriesName ?? title,
-      'volumeNumber': volumeNumber,
+      'seriesName': info.seriesName,
+      'volumeNumber': info.volumeNumber,
     };
   }
 
@@ -463,36 +402,18 @@ class TomosYGrapasClient {
     debugPrint('ENTRADA: seriesName="$seriesName", volumeNumber=$volumeNumber');
 
     // Detectar si es omnibus (ej: "ONE PIECE 3 EN 1")
-    final isOmnibus = RegExp(r'\d+\s*[Ee][Nn]\s*1').hasMatch(seriesName);
+    final volInfo = VolumeExtractor.extractFromTitle(seriesName);
+    final isOmnibus = volInfo.isOmnibus || RegExp(r'\d+\s*[Ee][Nn]\s*1').hasMatch(seriesName);
+    final baseSeriesName = volInfo.baseSeriesName;
     debugPrint('isOmnibus=$isOmnibus');
 
-    // Generar múltiples queries para aumentar probabilidad de encontrar
-    final queries = <String>[];
-
-    if (isOmnibus) {
-      final baseMatch = RegExp(r'^(.+?)\s*\d+\s*[Ee][Nn]\s*1', caseSensitive: false).firstMatch(seriesName);
-      final baseName = baseMatch?.group(1)?.trim();
-      queries.add(seriesName);
-      if (baseName != null) {
-        queries.add('$baseName 3 en 1');
-      }
-      queries.add('$seriesName $volumeNumber');
-      if (volumeNumber < 10) {
-        queries.add('$seriesName 0$volumeNumber');
-      }
-      if (baseName != null) {
-        queries.add('$baseName 3 en 1 $volumeNumber');
-        if (volumeNumber < 10) {
-          queries.add('$baseName 3 en 1 0$volumeNumber');
-        }
-      }
-    } else {
-      if (volumeNumber < 10) {
-        queries.add('$seriesName 0$volumeNumber');
-      }
-      queries.add('$seriesName $volumeNumber');
-      queries.add(seriesName);
-    }
+    // Generar queries usando QueryGenerator
+    final queries = QueryGenerator.forCover(
+      seriesName,
+      volumeNumber,
+      isOmnibus: isOmnibus,
+      baseSeriesName: baseSeriesName,
+    );
 
     // MÉTODO ESPECIAL: Para ONE PIECE 3 EN 1, intentar construir URL directamente
     if (isOmnibus && seriesName.toLowerCase().contains('one piece')) {

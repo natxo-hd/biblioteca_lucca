@@ -6,6 +6,7 @@ import '../models/book.dart';
 import '../services/book_provider.dart';
 import '../services/book_api_service.dart';
 import '../services/parent_settings_service.dart';
+import '../services/new_volume_checker_service.dart';
 import '../theme/comic_theme.dart';
 import '../widgets/celebration_overlay.dart';
 import '../widgets/next_volume_dialog.dart';
@@ -1213,8 +1214,27 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
     final seriesName = bookWithSeries.seriesName ?? bookWithSeries.title;
     final isSeriesComplete = await parentSettings.isSeriesComplete(seriesName);
 
-    // Si tiene siguiente volumen Y la serie NO está completa, mostrar diálogo
-    if (!isSeriesComplete && (bookWithSeries.hasNextVolume || bookWithSeries.isPartOfSeries)) {
+    // Verificar si el siguiente volumen existe antes de mostrar diálogo
+    bool? nextVolumeExists;
+    if (!isSeriesComplete && bookWithSeries.isPartOfSeries) {
+      final checker = NewVolumeCheckerService();
+      await checker.init();
+      final nextVolumeNumber = (bookWithSeries.volumeNumber ?? 0) + 1;
+      nextVolumeExists = await checker.doesVolumeExist(seriesName, nextVolumeNumber);
+    }
+
+    if (!mounted) return;
+
+    // Mostrar diálogo SOLO si:
+    // - Serie no completa
+    // - Es parte de una serie
+    // - El siguiente volumen existe (true) O no se pudo determinar (null) y OpenLibrary lo encontró
+    final shouldShowDialog = !isSeriesComplete &&
+        bookWithSeries.isPartOfSeries &&
+        (nextVolumeExists == true ||
+         (nextVolumeExists == null && bookWithSeries.hasNextVolume));
+
+    if (shouldShowDialog) {
       final result = await showNextVolumeDialog(context, bookWithSeries);
 
       if (result == 'have_it' && mounted) {
