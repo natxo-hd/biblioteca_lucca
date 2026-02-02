@@ -41,21 +41,30 @@ class BookApiService {
       book = await _searchGoogleBooks(cleanIsbn);
     }
 
-    // 4. Si no hay portada, intentar buscar por título en Tomos y Grapas
+    // 4. Si no hay portada, buscar en diferentes fuentes
     if (book != null && (book.coverUrl == null || book.coverUrl!.isEmpty)) {
-      debugPrint('Sin portada, buscando por título en Tomos y Grapas: ${book.title}');
-      final titleCovers = await _tomosYGrapasClient.searchCoversMultiple(
-        book.title,
-        limit: 1,
-      );
-      if (titleCovers.isNotEmpty) {
-        book = book.copyWith(coverUrl: titleCovers.first);
-        debugPrint('Portada encontrada en T&G por título: ${titleCovers.first}');
-      } else if (cleanIsbn.startsWith('97884')) {
-        // 5. Fallback: Casa del Libro solo para ISBN español
-        book = book.copyWith(
-          coverUrl: _buildCasaDelLibroCoverUrl(cleanIsbn),
+      // Para ISBN español: probar Casa del Libro PRIMERO (tiene portadas reales)
+      // antes de buscar por título en T&G (que puede devolver figuras/merchandising)
+      if (cleanIsbn.startsWith('97884')) {
+        debugPrint('ISBN español sin portada, probando Casa del Libro...');
+        final casaUrl = _buildCasaDelLibroCoverUrl(cleanIsbn);
+        if (await _validateCoverUrl(casaUrl)) {
+          book = book.copyWith(coverUrl: casaUrl);
+          debugPrint('Portada encontrada en Casa del Libro: $casaUrl');
+        }
+      }
+
+      // Si aún no hay portada, buscar por título en Tomos y Grapas
+      if (book.coverUrl == null || book.coverUrl!.isEmpty) {
+        debugPrint('Sin portada, buscando por título en Tomos y Grapas: ${book.title}');
+        final titleCovers = await _tomosYGrapasClient.searchCoversMultiple(
+          book.title,
+          limit: 1,
         );
+        if (titleCovers.isNotEmpty) {
+          book = book.copyWith(coverUrl: titleCovers.first);
+          debugPrint('Portada encontrada en T&G por título: ${titleCovers.first}');
+        }
       }
     }
 
