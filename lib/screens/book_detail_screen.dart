@@ -909,12 +909,25 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
 
       String? newCover;
 
-      // Usar el provider que tiene traducciones español -> inglés
-      newCover = await provider.searchCover(
-        seriesName,
-        _book.author,
-        volumeNumber: volumeNum,
-      );
+      // PRIMERO: Si tenemos ISBN real, probar Casa del Libro (portada exacta por ISBN)
+      final hasRealIsbn = _book.isbn.length >= 10 && !_book.isbn.contains('-vol-');
+      if (hasRealIsbn) {
+        debugPrint('Intentando Casa del Libro con ISBN: ${_book.isbn}');
+        final apiService = BookApiService();
+        newCover = await apiService.searchCoverByIsbn(_book.isbn);
+        if (newCover != null) {
+          debugPrint('Portada encontrada en Casa del Libro por ISBN');
+        }
+      }
+
+      // Si Casa del Libro no tiene, usar el provider con traducciones español -> inglés
+      if (newCover == null || newCover.isEmpty) {
+        newCover = await provider.searchCover(
+          seriesName,
+          _book.author,
+          volumeNumber: volumeNum,
+        );
+      }
 
       // Fallback con queries adicionales
       if (newCover == null || newCover.isEmpty) {

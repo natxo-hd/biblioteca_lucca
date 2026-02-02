@@ -220,6 +220,8 @@ class ComicTypeDetector {
     'department of truth',
     'ice cream man',
     'something is killing the children',
+    'hay algo matando niños',
+    'hay algo matando ninos',
     'nocterra',
     'dark horse',
     'boom studios',

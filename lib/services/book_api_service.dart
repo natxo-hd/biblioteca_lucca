@@ -54,16 +54,29 @@ class BookApiService {
         }
       }
 
-      // Si aún no hay portada, buscar por título en Tomos y Grapas
+      // Si aún no hay portada, buscar en Tomos y Grapas
       if (book.coverUrl == null || book.coverUrl!.isEmpty) {
-        debugPrint('Sin portada, buscando por título en Tomos y Grapas: ${book.title}');
-        final titleCovers = await _tomosYGrapasClient.searchCoversMultiple(
-          book.title,
-          limit: 1,
-        );
-        if (titleCovers.isNotEmpty) {
-          book = book.copyWith(coverUrl: titleCovers.first);
-          debugPrint('Portada encontrada en T&G por título: ${titleCovers.first}');
+        // Si tenemos volumen, buscar con volume matching (evita devolver portada de otro vol)
+        if (book.volumeNumber != null) {
+          final seriesName = book.seriesName ?? book.title;
+          debugPrint('Sin portada, buscando vol ${book.volumeNumber} de "$seriesName" en T&G...');
+          final volumeCover = await _tomosYGrapasClient.searchCover(seriesName, book.volumeNumber!);
+          if (volumeCover != null) {
+            book = book.copyWith(coverUrl: volumeCover);
+            debugPrint('Portada encontrada en T&G por serie+vol: $volumeCover');
+          }
+        }
+        // Si aún no hay portada, buscar genérico por título
+        if (book.coverUrl == null || book.coverUrl!.isEmpty) {
+          debugPrint('Sin portada, buscando por título en Tomos y Grapas: ${book.title}');
+          final titleCovers = await _tomosYGrapasClient.searchCoversMultiple(
+            book.title,
+            limit: 1,
+          );
+          if (titleCovers.isNotEmpty) {
+            book = book.copyWith(coverUrl: titleCovers.first);
+            debugPrint('Portada encontrada en T&G por título: ${titleCovers.first}');
+          }
         }
       }
     }
