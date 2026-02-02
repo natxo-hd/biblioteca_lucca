@@ -519,6 +519,7 @@ class _GroupedBookGridState extends State<GroupedBookGrid> {
             onPressed: () {
               Navigator.pop(ctx);
               context.read<BookProvider>().archiveSeries(series);
+              ScaffoldMessenger.of(context).clearSnackBars();
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
                   content: Text(
@@ -526,6 +527,10 @@ class _GroupedBookGridState extends State<GroupedBookGrid> {
                     style: GoogleFonts.comicNeue(fontWeight: FontWeight.bold),
                   ),
                   backgroundColor: ComicTheme.primaryOrange,
+                  duration: const Duration(seconds: 3),
+                  behavior: SnackBarBehavior.floating,
+                  margin: const EdgeInsets.fromLTRB(16, 0, 16, 80),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   action: SnackBarAction(
                     label: 'DESHACER',
                     textColor: Colors.white,

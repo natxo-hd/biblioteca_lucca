@@ -7,6 +7,7 @@ import '../services/new_volume_checker_service.dart';
 import '../widgets/book_grid.dart';
 import '../widgets/grouped_book_grid.dart';
 import '../widgets/new_volumes_alert_dialog.dart';
+import '../widgets/wishlist_archived_view.dart';
 import '../theme/comic_theme.dart';
 import 'scanner_screen.dart';
 import 'settings_screen.dart';
@@ -119,24 +120,6 @@ class _HomeScreenState extends State<HomeScreen>
             backgroundColor: Colors.transparent,
             elevation: 0,
             actions: [
-              if (_currentIndex == 1)
-                Consumer<BookProvider>(
-                  builder: (context, provider, _) {
-                    final archivedCount = provider.archivedBooks.length;
-                    return IconButton(
-                      icon: Badge(
-                        isLabelVisible: archivedCount > 0,
-                        label: Text(
-                          archivedCount.toString(),
-                          style: const TextStyle(fontSize: 10),
-                        ),
-                        child: const Icon(Icons.archive),
-                      ),
-                      tooltip: 'Series archivadas',
-                      onPressed: () => _showArchivedDialog(context, provider),
-                    );
-                  },
-                ),
               IconButton(
                 icon: const Icon(Icons.settings),
                 onPressed: () {
@@ -151,12 +134,13 @@ class _HomeScreenState extends State<HomeScreen>
         ),
       ),
       body: MangaBackground(
-        child: Selector<BookProvider, ({bool isLoading, List<Book> reading, List<Book> finished, List<Book> wishlist})>(
+        child: Selector<BookProvider, ({bool isLoading, List<Book> reading, List<Book> finished, List<Book> wishlist, List<Book> archived})>(
           selector: (_, provider) => (
             isLoading: provider.isLoading,
             reading: provider.readingBooks,
             finished: provider.finishedBooks,
             wishlist: provider.wishlistBooks,
+            archived: provider.archivedBooks,
           ),
           shouldRebuild: (previous, next) {
             // Solo rebuild si cambia isLoading o la lista del tab actual
@@ -167,7 +151,7 @@ class _HomeScreenState extends State<HomeScreen>
               case 1:
                 return previous.finished != next.finished;
               case 2:
-                return previous.wishlist != next.wishlist;
+                return previous.wishlist != next.wishlist || previous.archived != next.archived;
               default:
                 return false;
             }
@@ -208,13 +192,18 @@ class _HomeScreenState extends State<HomeScreen>
                 books = [];
             }
 
-            if (books.isEmpty) {
+            // Para tab 2, comprobar tanto wishlist como archived
+            if (_currentIndex == 2) {
+              if (books.isEmpty && data.archived.isEmpty) {
+                return _buildEmptyState();
+              }
+            } else if (books.isEmpty) {
               return _buildEmptyState();
             }
 
             return FadeTransition(
               opacity: _tabFadeAnimation,
-              child: _buildContent(books),
+              child: _buildContent(books, data.archived),
             );
           },
         ),
@@ -344,7 +333,7 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  Widget _buildContent(List<Book> books) {
+  Widget _buildContent(List<Book> books, List<Book> archivedBooks) {
     // Generar key basada en hash de portadas para forzar reconstrucción
     final coversHash = books.fold<int>(0, (hash, b) => hash ^ (b.localCoverPath ?? b.coverUrl ?? '').hashCode);
 
@@ -354,7 +343,12 @@ class _HomeScreenState extends State<HomeScreen>
       case 1:
         return GroupedBookGrid(key: ValueKey('finished_$coversHash'), books: books, isReadingList: false);
       case 2:
-        return BookGrid(key: ValueKey('wishlist_$coversHash'), books: books, isReadingList: false);
+        final archivedHash = archivedBooks.fold<int>(0, (hash, b) => hash ^ (b.localCoverPath ?? b.coverUrl ?? '').hashCode);
+        return WishlistAndArchivedView(
+          key: ValueKey('wishlist_archived_${coversHash}_$archivedHash'),
+          wishlistBooks: books,
+          archivedBooks: archivedBooks,
+        );
       default:
         return const SizedBox.shrink();
     }
@@ -654,200 +648,6 @@ class _HomeScreenState extends State<HomeScreen>
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  void _showArchivedDialog(BuildContext context, BookProvider provider) {
-    final archivedGroups = provider.getArchivedSeriesGrouped();
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        constraints: BoxConstraints(
-          maxHeight: MediaQuery.of(context).size.height * 0.7,
-        ),
-        decoration: const BoxDecoration(
-          color: ComicTheme.backgroundCream,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-          border: Border(
-            top: BorderSide(color: ComicTheme.comicBorder, width: 3),
-            left: BorderSide(color: ComicTheme.comicBorder, width: 3),
-            right: BorderSide(color: ComicTheme.comicBorder, width: 3),
-          ),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              margin: const EdgeInsets.only(top: 12),
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey[400],
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                        colors: ComicTheme.powerGradient,
-                      ),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Icon(Icons.archive,
-                        color: Colors.white, size: 20),
-                  ),
-                  const SizedBox(width: 12),
-                  Text(
-                    'SERIES ARCHIVADAS',
-                    style: GoogleFonts.bangers(
-                      fontSize: 20,
-                      color: ComicTheme.comicBorder,
-                      letterSpacing: 1,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const Divider(height: 1),
-            Flexible(
-              child: archivedGroups.isEmpty
-                  ? Padding(
-                      padding: const EdgeInsets.all(32),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.archive_outlined,
-                              size: 48, color: Colors.grey[400]),
-                          const SizedBox(height: 12),
-                          Text(
-                            'No hay series archivadas',
-                            style: GoogleFonts.comicNeue(
-                              fontWeight: FontWeight.bold,
-                              color: Colors.grey[500],
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Mantén pulsado en una serie para archivarla',
-                            style: GoogleFonts.comicNeue(
-                              color: Colors.grey[400],
-                              fontSize: 12,
-                            ),
-                            textAlign: TextAlign.center,
-                          ),
-                        ],
-                      ),
-                    )
-                  : ListView.builder(
-                      shrinkWrap: true,
-                      padding: const EdgeInsets.all(16),
-                      itemCount: archivedGroups.length,
-                      itemBuilder: (context, index) {
-                        final entry =
-                            archivedGroups.entries.elementAt(index);
-                        final series = entry.key;
-                        final books = entry.value;
-                        return _buildArchivedSeriesTile(
-                            series, books, provider);
-                      },
-                    ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildArchivedSeriesTile(
-      String series, List<Book> books, BookProvider provider) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: ComicTheme.comicBorder, width: 2),
-        boxShadow: const [
-          BoxShadow(
-            color: Colors.black12,
-            offset: Offset(2, 2),
-            blurRadius: 0,
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: ComicTheme.primaryOrange.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: const Icon(Icons.archive,
-                color: ComicTheme.primaryOrange, size: 24),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  series,
-                  style: GoogleFonts.bangers(
-                    fontSize: 16,
-                    color: ComicTheme.comicBorder,
-                  ),
-                ),
-                Text(
-                  '${books.length} volúmenes',
-                  style: GoogleFonts.comicNeue(
-                    fontSize: 12,
-                    color: Colors.grey[600],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          ElevatedButton.icon(
-            onPressed: () {
-              provider.unarchiveSeries(series);
-              Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(
-                    '$series restaurada!',
-                    style:
-                        GoogleFonts.comicNeue(fontWeight: FontWeight.bold),
-                  ),
-                  backgroundColor: ComicTheme.powerGreen,
-                ),
-              );
-            },
-            icon: const Icon(Icons.unarchive, size: 18),
-            label: Text(
-              'RESTAURAR',
-              style: GoogleFonts.bangers(fontSize: 12),
-            ),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: ComicTheme.secondaryBlue,
-              foregroundColor: Colors.white,
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }
