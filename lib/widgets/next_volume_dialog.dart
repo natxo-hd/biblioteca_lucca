@@ -25,7 +25,7 @@ class NextVolumeDialog extends StatefulWidget {
 }
 
 class _NextVolumeDialogState extends State<NextVolumeDialog> {
-  // Estados: 'ask' -> '¿Tienes el libro?', 'request' -> 'Enviar a papa', 'sent' -> 'Enviado'
+  // Estados: 'ask' -> '¿Tienes el libro?', 'request' -> 'Enviar mail', 'sent' -> 'Enviado'
   String _currentView = 'ask';
   bool _sending = false;
 
@@ -266,7 +266,7 @@ class _NextVolumeDialogState extends State<NextVolumeDialog> {
     return Column(
       children: [
         Text(
-          'Dile a papa que quieres:',
+          'Enviar solicitud de:',
           style: GoogleFonts.comicNeue(
             fontWeight: FontWeight.bold,
             fontSize: 16,
@@ -339,7 +339,7 @@ class _NextVolumeDialogState extends State<NextVolumeDialog> {
                         child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                       )
                     : Text(
-                        'ENVIAR A PAPA',
+                        'ENVIAR MAIL',
                         style: GoogleFonts.bangers(fontSize: 16, color: Colors.white),
                       ),
               ),
@@ -357,7 +357,7 @@ class _NextVolumeDialogState extends State<NextVolumeDialog> {
         const SizedBox(height: 16),
 
         Text(
-          '¡Papa ya sabe que quieres:',
+          '¡Solicitud enviada!',
           style: GoogleFonts.comicNeue(
             fontWeight: FontWeight.bold,
             fontSize: 16,

@@ -10,8 +10,9 @@ import 'alphabet_index.dart';
 /// Vista combinada de libros solicitados (wishlist) y series archivadas.
 ///
 /// Muestra primero los libros solicitados en grid 3 columnas,
-/// y debajo las series archivadas agrupadas en orden alfabético
-/// con AlphabetIndex para navegación rápida.
+/// y debajo las series archivadas agrupadas con headers colapsables
+/// y filas horizontales de portadas (como en GroupedBookGrid).
+/// Incluye AlphabetIndex para navegación rápida.
 class WishlistAndArchivedView extends StatefulWidget {
   final List<Book> wishlistBooks;
   final List<Book> archivedBooks;
@@ -29,6 +30,7 @@ class WishlistAndArchivedView extends StatefulWidget {
 
 class _WishlistAndArchivedViewState extends State<WishlistAndArchivedView> {
   final ScrollController _scrollController = ScrollController();
+  final Set<String> _collapsedSeries = {};
   String? _currentLetter;
   bool _showLetterIndicator = false;
 
@@ -73,6 +75,16 @@ class _WishlistAndArchivedViewState extends State<WishlistAndArchivedView> {
     super.dispose();
   }
 
+  void _toggleSeries(String series) {
+    setState(() {
+      if (_collapsedSeries.contains(series)) {
+        _collapsedSeries.remove(series);
+      } else {
+        _collapsedSeries.add(series);
+      }
+    });
+  }
+
   void _scrollToLetter(String letter) {
     final grouped = _archivedGrouped;
     final sortedSeries = grouped.keys.toList();
@@ -88,16 +100,15 @@ class _WishlistAndArchivedViewState extends State<WishlistAndArchivedView> {
 
     if (targetIndex < 0) return;
 
-    // Calcular offset: seccion solicitados + series anteriores
+    // Calcular offset: sección solicitados + series anteriores
     double offset = 0;
 
     // Altura de la sección de solicitados
     if (widget.wishlistBooks.isNotEmpty) {
       const sectionHeaderHeight = 60.0;
       final wishlistRows = (widget.wishlistBooks.length / 3).ceil();
-      // childAspectRatio 0.55 con ancho ~(screenWidth-64)/3 ≈ 110 → altura ~200
-      const rowHeight = 216.0; // 200 + mainAxisSpacing 16
-      offset += sectionHeaderHeight + (wishlistRows * rowHeight) + 24; // padding
+      const rowHeight = 216.0;
+      offset += sectionHeaderHeight + (wishlistRows * rowHeight) + 24;
     }
 
     // Altura del header de sección "ARCHIVADAS"
@@ -106,11 +117,14 @@ class _WishlistAndArchivedViewState extends State<WishlistAndArchivedView> {
     // Sumar alturas de series anteriores
     for (int i = 0; i < targetIndex; i++) {
       final seriesName = sortedSeries[i];
-      final books = grouped[seriesName]!;
-      const seriesHeaderHeight = 56.0;
-      final rows = (books.length / 3).ceil();
-      const rowHeight = 216.0;
-      offset += seriesHeaderHeight + (rows * rowHeight) + 16;
+      const seriesHeaderHeight = 68.0; // header con padding
+      final isCollapsed = _collapsedSeries.contains(seriesName);
+      if (isCollapsed) {
+        offset += seriesHeaderHeight;
+      } else {
+        const booksRowHeight = 207.0; // 195 + spacing 12
+        offset += seriesHeaderHeight + booksRowHeight;
+      }
     }
 
     _scrollController.animateTo(
@@ -134,7 +148,7 @@ class _WishlistAndArchivedViewState extends State<WishlistAndArchivedView> {
     final grouped = _archivedGrouped;
     final hasWishlist = widget.wishlistBooks.isNotEmpty;
     final hasArchived = grouped.isNotEmpty;
-    final showAlphabetIndex = hasArchived && grouped.length >= 5;
+    final showAlphabetIndex = hasArchived && grouped.length >= 3;
 
     return Stack(
       children: [
@@ -182,35 +196,31 @@ class _WishlistAndArchivedViewState extends State<WishlistAndArchivedView> {
                   Colors.grey[600]!,
                 ),
               ),
-              for (final entry in grouped.entries) ...[
-                SliverToBoxAdapter(
-                  child: _buildArchivedSeriesHeader(entry.key, entry.value.length),
+              SliverPadding(
+                padding: EdgeInsets.fromLTRB(
+                  16, 0, showAlphabetIndex ? 40 : 16, 0,
                 ),
-                SliverPadding(
-                  padding: EdgeInsets.fromLTRB(
-                    16, 0, showAlphabetIndex ? 40 : 16, 16,
-                  ),
-                  sliver: SliverGrid(
-                    gridDelegate:
-                        const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 3,
-                      childAspectRatio: 0.55,
-                      crossAxisSpacing: 12,
-                      mainAxisSpacing: 16,
-                    ),
-                    delegate: SliverChildBuilderDelegate(
-                      (context, index) => Opacity(
-                        opacity: 0.6,
-                        child: BookCard(
-                          book: entry.value[index],
-                          showProgress: false,
-                        ),
-                      ),
-                      childCount: entry.value.length,
-                    ),
+                sliver: SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) {
+                      final entry = grouped.entries.elementAt(index);
+                      final series = entry.key;
+                      final books = entry.value;
+                      final isCollapsed = _collapsedSeries.contains(series);
+
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _buildArchivedSeriesHeader(series, books.length, isCollapsed),
+                          if (!isCollapsed) _buildBooksRow(books),
+                          const SizedBox(height: 12),
+                        ],
+                      );
+                    },
+                    childCount: grouped.length,
                   ),
                 ),
-              ],
+              ),
             ],
 
             // Padding para FAB
@@ -286,43 +296,78 @@ class _WishlistAndArchivedViewState extends State<WishlistAndArchivedView> {
     );
   }
 
-  Widget _buildArchivedSeriesHeader(String series, int volCount) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+  Widget _buildArchivedSeriesHeader(String series, int volCount, bool isCollapsed) {
+    return GestureDetector(
+      onTap: () => _toggleSeries(series),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         decoration: BoxDecoration(
-          color: Colors.grey[100],
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.grey[300]!),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Colors.grey[400]!.withValues(alpha: 0.2),
+              Colors.grey[300]!.withValues(alpha: 0.1),
+            ],
+          ),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: Colors.grey[400]!,
+            width: 2,
+          ),
+          boxShadow: [
+            const BoxShadow(
+              color: Colors.black12,
+              offset: Offset(2, 2),
+              blurRadius: 0,
+            ),
+          ],
         ),
         child: Row(
           children: [
-            Icon(Icons.archive, size: 18, color: Colors.grey[500]),
+            Icon(
+              isCollapsed ? Icons.chevron_right : Icons.expand_more,
+              color: Colors.grey[600],
+              size: 24,
+            ),
             const SizedBox(width: 8),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    series,
-                    style: GoogleFonts.bangers(
-                      fontSize: 14,
-                      color: ComicTheme.comicBorder,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  Text(
-                    '$volCount vol.',
-                    style: GoogleFonts.comicNeue(
-                      fontSize: 11,
-                      color: Colors.grey[500],
-                    ),
+              child: Text(
+                series.toUpperCase(),
+                style: GoogleFonts.bangers(
+                  fontSize: 15,
+                  color: ComicTheme.comicBorder,
+                  letterSpacing: 1,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: Colors.grey[500],
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.white, width: 2),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Colors.black26,
+                    offset: Offset(2, 2),
+                    blurRadius: 0,
                   ),
                 ],
               ),
+              child: Text(
+                '$volCount vols',
+                style: GoogleFonts.bangers(
+                  fontSize: 12,
+                  color: Colors.white,
+                  letterSpacing: 0.5,
+                ),
+              ),
             ),
+            const SizedBox(width: 8),
             TextButton.icon(
               onPressed: () {
                 context.read<BookProvider>().unarchiveSeries(series);
@@ -343,8 +388,7 @@ class _WishlistAndArchivedViewState extends State<WishlistAndArchivedView> {
                   ),
                 );
               },
-              icon:
-                  const Icon(Icons.unarchive, size: 16, color: ComicTheme.secondaryBlue),
+              icon: const Icon(Icons.unarchive, size: 16, color: ComicTheme.secondaryBlue),
               label: Text(
                 'RESTAURAR',
                 style: GoogleFonts.bangers(
@@ -353,14 +397,39 @@ class _WishlistAndArchivedViewState extends State<WishlistAndArchivedView> {
                 ),
               ),
               style: TextButton.styleFrom(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
                 minimumSize: Size.zero,
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildBooksRow(List<Book> books) {
+    return SizedBox(
+      height: 195,
+      child: ListView.builder(
+        scrollDirection: Axis.horizontal,
+        physics: const BouncingScrollPhysics(),
+        clipBehavior: Clip.none,
+        itemCount: books.length,
+        itemBuilder: (context, index) {
+          return Container(
+            width: 110,
+            margin: EdgeInsets.only(right: index < books.length - 1 ? 12 : 0),
+            child: Opacity(
+              opacity: 0.6,
+              child: BookCard(
+                key: ValueKey('archived_${books[index].isbn}'),
+                book: books[index],
+                showProgress: false,
+              ),
+            ),
+          );
+        },
       ),
     );
   }

@@ -391,9 +391,9 @@ class _HomeScreenState extends State<HomeScreen>
               ),
               _buildNavItem(
                 index: 2,
-                icon: Icons.card_giftcard_outlined,
-                selectedIcon: Icons.card_giftcard,
-                label: 'SOLICITADOS',
+                icon: Icons.inventory_2_outlined,
+                selectedIcon: Icons.inventory_2,
+                label: 'MÁS',
                 color: ComicTheme.secondaryBlue,
                 gradient: ComicTheme.heroGradient,
               ),

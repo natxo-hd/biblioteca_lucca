@@ -232,7 +232,7 @@ class _GroupedBookGridState extends State<GroupedBookGrid> {
               ),
             ),
             const SizedBox(height: 10),
-            // Opción 2: Pedir a papá
+            // Opción 2: Pedir por mail
             SizedBox(
               width: double.infinity,
               child: OutlinedButton.icon(
@@ -242,7 +242,7 @@ class _GroupedBookGridState extends State<GroupedBookGrid> {
                 },
                 icon: const Icon(Icons.mail_outline),
                 label: Text(
-                  'PEDIR A PAPÁ',
+                  'PEDIR POR MAIL',
                   style: GoogleFonts.bangers(fontSize: 16),
                 ),
                 style: OutlinedButton.styleFrom(
@@ -911,7 +911,7 @@ class _GroupedBookGridState extends State<GroupedBookGrid> {
           SnackBar(
             content: Text(
               emailSent
-                  ? '¡$series Vol. $nextVol solicitado a papá! 📧'
+                  ? '¡$series Vol. $nextVol solicitado por mail! 📧'
                   : '¡$series Vol. $nextVol añadido a Solicitados!',
               style: GoogleFonts.comicNeue(fontWeight: FontWeight.bold),
             ),
