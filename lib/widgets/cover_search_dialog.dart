@@ -1,9 +1,12 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:http/http.dart' as http;
 import '../theme/comic_theme.dart';
 import '../services/book_api_service.dart';
 import '../services/api/tomosygrapas_client.dart';
+import '../constants/translations.dart';
 
 /// Diálogo para buscar y seleccionar portada manualmente
 class CoverSearchDialog extends StatefulWidget {
@@ -60,13 +63,20 @@ class _CoverSearchDialogState extends State<CoverSearchDialog> {
     try {
       final results = <String>{};
 
-      // 1. Si tenemos volumen, buscar primero la portada específica del volumen
+      // Obtener traducción al inglés si existe
+      final englishQuery = ComicTranslations.hasTranslation(query)
+          ? ComicTranslations.getEnglishName(query)
+          : null;
+      if (englishQuery != null) {
+        debugPrint('🔍 Traducción encontrada: "$query" → "$englishQuery"');
+      }
+
+      // 1. Si tenemos volumen, buscar portada específica en T&G
       if (widget.volumeNumber != null) {
         debugPrint('🔍 Buscando portada específica vol ${widget.volumeNumber}: $query');
         final exactCover = await _tomosYGrapas.searchCover(query, widget.volumeNumber!);
         if (exactCover != null && exactCover.isNotEmpty) {
           results.add(exactCover);
-          // Actualizar UI con resultado exacto primero
           if (mounted) {
             setState(() => _coverResults = results.toList());
           }
@@ -78,37 +88,46 @@ class _CoverSearchDialogState extends State<CoverSearchDialog> {
       final tomosResults = await _tomosYGrapas.searchCoversMultiple(query, limit: 6);
       results.addAll(tomosResults);
 
-      // También buscar con volumen en el query
-      if (widget.volumeNumber != null) {
-        final volQuery = '$query ${widget.volumeNumber}';
-        debugPrint('🔍 Buscando portadas en T&G con volumen: $volQuery');
-        final tomosVolResults = await _tomosYGrapas.searchCoversMultiple(volQuery, limit: 3);
-        results.addAll(tomosVolResults);
-      }
-
-      // Actualizar UI con resultados parciales
       if (mounted && results.isNotEmpty) {
         setState(() => _coverResults = results.toList());
       }
 
-      // 3. Buscar en Google Books
+      // 3. Buscar en Google Books con título en INGLÉS + volumen (más fiable)
+      if (englishQuery != null && widget.volumeNumber != null) {
+        final engVolQueries = [
+          '$englishQuery ${widget.volumeNumber}',
+          '$englishQuery vol ${widget.volumeNumber}',
+        ];
+        for (final engQ in engVolQueries) {
+          if (results.length >= 12) break;
+          final covers = await _searchGoogleBooksCovers(engQ);
+          results.addAll(covers);
+        }
+        if (mounted && results.isNotEmpty) {
+          setState(() => _coverResults = results.toList());
+        }
+      }
+
+      // 4. Buscar en Google Books con título español
       debugPrint('🔍 Buscando portadas en Google Books: $query');
       final googleCover = await _apiService.searchCover(query, widget.author);
       if (googleCover != null && googleCover.isNotEmpty) {
         results.add(googleCover);
       }
 
-      // 4. Buscar con variaciones de volumen
+      // 5. Buscar con variaciones de volumen
       if (widget.volumeNumber != null) {
         final volNum = widget.volumeNumber!;
         final variations = [
           '$query vol $volNum',
           '$query $volNum',
           if (volNum < 10) '$query 0$volNum',
+          // También con nombre inglés
+          if (englishQuery != null) '$englishQuery $volNum',
         ];
 
         for (final variation in variations) {
-          if (results.length >= 10) break;
+          if (results.length >= 12) break;
           final cover = await _apiService.searchCover(variation, widget.author);
           if (cover != null && cover.isNotEmpty && !results.contains(cover)) {
             results.add(cover);
@@ -128,6 +147,41 @@ class _CoverSearchDialogState extends State<CoverSearchDialog> {
         setState(() => _isSearching = false);
       }
     }
+  }
+
+  /// Busca portadas directamente en Google Books (sin restricción de idioma)
+  Future<List<String>> _searchGoogleBooksCovers(String query) async {
+    final covers = <String>[];
+    try {
+      debugPrint('🔍 Google Books (intl): "$query"');
+      final url = Uri.parse(
+        'https://www.googleapis.com/books/v1/volumes?q=${Uri.encodeComponent(query)}&maxResults=5',
+      );
+      final response = await http.get(url).timeout(const Duration(seconds: 8));
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final items = data['items'] as List? ?? [];
+        for (final item in items) {
+          final volumeInfo = item['volumeInfo'] as Map<String, dynamic>?;
+          if (volumeInfo == null) continue;
+          final imageLinks = volumeInfo['imageLinks'] as Map<String, dynamic>?;
+          if (imageLinks == null) continue;
+          var imgUrl = imageLinks['thumbnail'] as String? ??
+              imageLinks['smallThumbnail'] as String?;
+          if (imgUrl != null) {
+            imgUrl = imgUrl.replaceAll('http://', 'https://');
+            imgUrl = imgUrl.replaceAll('zoom=1', 'zoom=3');
+            if (!covers.contains(imgUrl)) {
+              covers.add(imgUrl);
+              debugPrint('📚 Google Books cover: $imgUrl');
+            }
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Google Books covers error: $e');
+    }
+    return covers;
   }
 
   @override
