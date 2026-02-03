@@ -60,24 +60,45 @@ class _CoverSearchDialogState extends State<CoverSearchDialog> {
     try {
       final results = <String>{};
 
-      // 1. Buscar en Tomos y Grapas
+      // 1. Si tenemos volumen, buscar primero la portada específica del volumen
+      if (widget.volumeNumber != null) {
+        debugPrint('🔍 Buscando portada específica vol ${widget.volumeNumber}: $query');
+        final exactCover = await _tomosYGrapas.searchCover(query, widget.volumeNumber!);
+        if (exactCover != null && exactCover.isNotEmpty) {
+          results.add(exactCover);
+          // Actualizar UI con resultado exacto primero
+          if (mounted) {
+            setState(() => _coverResults = results.toList());
+          }
+        }
+      }
+
+      // 2. Buscar múltiples portadas en Tomos y Grapas
       debugPrint('🔍 Buscando portadas en Tomos y Grapas: $query');
       final tomosResults = await _tomosYGrapas.searchCoversMultiple(query, limit: 6);
       results.addAll(tomosResults);
+
+      // También buscar con volumen en el query
+      if (widget.volumeNumber != null) {
+        final volQuery = '$query ${widget.volumeNumber}';
+        debugPrint('🔍 Buscando portadas en T&G con volumen: $volQuery');
+        final tomosVolResults = await _tomosYGrapas.searchCoversMultiple(volQuery, limit: 3);
+        results.addAll(tomosVolResults);
+      }
 
       // Actualizar UI con resultados parciales
       if (mounted && results.isNotEmpty) {
         setState(() => _coverResults = results.toList());
       }
 
-      // 2. Buscar en Google Books
+      // 3. Buscar en Google Books
       debugPrint('🔍 Buscando portadas en Google Books: $query');
       final googleCover = await _apiService.searchCover(query, widget.author);
       if (googleCover != null && googleCover.isNotEmpty) {
         results.add(googleCover);
       }
 
-      // 3. Buscar con variaciones
+      // 4. Buscar con variaciones de volumen
       if (widget.volumeNumber != null) {
         final volNum = widget.volumeNumber!;
         final variations = [
@@ -87,7 +108,7 @@ class _CoverSearchDialogState extends State<CoverSearchDialog> {
         ];
 
         for (final variation in variations) {
-          if (results.length >= 8) break;
+          if (results.length >= 10) break;
           final cover = await _apiService.searchCover(variation, widget.author);
           if (cover != null && cover.isNotEmpty && !results.contains(cover)) {
             results.add(cover);

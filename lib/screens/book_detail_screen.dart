@@ -1278,27 +1278,21 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
     final nextTitle = finishedBook.nextVolumeTitle ??
         (isOmnibus ? '$seriesName $nextVolumeNumber' : '$seriesName Vol. $nextVolumeNumber');
 
-    // Buscar portada si no la tenemos (usando provider que tiene traducciones)
-    String? coverUrl = finishedBook.nextVolumeCover;
-    if (coverUrl == null || coverUrl.isEmpty) {
-      coverUrl = await provider.searchCover(
-        seriesName,
-        finishedBook.author,
-        volumeNumber: nextVolumeNumber,
-      );
-    }
-
     // ISBN sintético ESTÁNDAR: basado en serie (igual que grouped_book_grid)
     // Esto evita duplicados cuando se solicita desde diferentes pantallas
     final syntheticIsbn = finishedBook.nextVolumeIsbn ??
         '${seriesName.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '-')}-vol-$nextVolumeNumber';
 
-    // Crear el siguiente libro
+    // Usar portada pre-cacheada si la tenemos
+    final preCachedCover = finishedBook.nextVolumeCover;
+
+    // PRIMERO añadir el libro (con portada pre-cacheada si existe, sin portada si no)
+    // para que aparezca inmediatamente en la lista
     final nextBook = Book(
       isbn: syntheticIsbn,
       title: nextTitle,
       author: finishedBook.author,
-      coverUrl: coverUrl,
+      coverUrl: preCachedCover,
       status: status,
       currentPage: 0,
       totalPages: finishedBook.totalPages,
@@ -1335,6 +1329,25 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
         );
       }
       Navigator.pop(context);
+    }
+
+    // DESPUÉS buscar portada en segundo plano si no tenemos una pre-cacheada
+    if (added && (preCachedCover == null || preCachedCover.isEmpty)) {
+      final allBooks = [...provider.readingBooks, ...provider.finishedBooks, ...provider.wishlistBooks];
+      final addedBook = allBooks.firstWhere(
+        (b) => b.seriesName == seriesName && b.volumeNumber == nextVolumeNumber,
+        orElse: () => nextBook,
+      );
+      if (addedBook.id != null) {
+        final coverUrl = await provider.searchCover(
+          seriesName,
+          finishedBook.author,
+          volumeNumber: nextVolumeNumber,
+        );
+        if (coverUrl != null && coverUrl.isNotEmpty) {
+          await provider.updateCoverUrl(addedBook.id!, coverUrl);
+        }
+      }
     }
   }
 

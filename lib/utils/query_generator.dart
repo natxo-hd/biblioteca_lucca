@@ -82,9 +82,15 @@ class QueryGenerator {
         add('$englishTitle $volStr');
       }
 
-      // Simplificada: primeras 2 palabras + vol
+      // Simplificada: sin última palabra (fallback para búsquedas AJAX que
+      // devuelven peores resultados con queries largas)
       final words = seriesName.split(RegExp(r'\s+'));
+      if (words.length > 3) {
+        add('${words.take(words.length - 1).join(' ')} $volPadded');
+        add('${words.take(words.length - 1).join(' ')} $volStr');
+      }
       if (words.length > 2) {
+        add('${words.take(3).join(' ')} $volPadded');
         add('${words.take(2).join(' ')} $volStr');
       }
 

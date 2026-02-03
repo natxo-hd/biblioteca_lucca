@@ -94,6 +94,8 @@ class ComicTranslations {
     'academia umbrella': 'umbrella academy',
     'la academia umbrella': 'umbrella academy',
     'chicas de papel': 'paper girls',
+    'hay algo matando niños': 'something is killing the children',
+    'hay algo matando ninos': 'something is killing the children',
 
     // Series que no necesitan traduccion pero normalizan busqueda
     'one punch man': 'one punch man',

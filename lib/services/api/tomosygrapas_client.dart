@@ -935,61 +935,73 @@ class TomosYGrapasClient {
   Future<List<String>> searchCoversMultiple(String query, {int limit = 8}) async {
     final results = <String>[];
 
-    try {
-      debugPrint('TomosYGrapas: Buscando múltiples portadas para: $query');
+    // Generar variaciones del query: el AJAX de T&G devuelve peores resultados
+    // con queries largos (4+ palabras), así que probar versiones más cortas
+    final queries = <String>[query];
+    final words = query.split(RegExp(r'\s+'));
+    if (words.length > 3) {
+      queries.add(words.take(words.length - 1).join(' '));
+      queries.add(words.take(3).join(' '));
+    }
 
-      // Usar endpoint AJAX
-      final ajaxUrl = Uri.parse(
-        '$_baseUrl/es/module/leoproductsearch/productsearch?ajax=1&q=${Uri.encodeComponent(query)}',
-      );
+    for (final q in queries) {
+      if (results.length >= limit) break;
 
-      final response = await http.get(
-        ajaxUrl,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36',
-          'Accept': 'application/json',
-          'X-Requested-With': 'XMLHttpRequest',
-        },
-      ).timeout(const Duration(seconds: 15));
+      try {
+        debugPrint('TomosYGrapas: Buscando múltiples portadas para: $q');
 
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body) as Map<String, dynamic>;
-        final products = data['products'] as List<dynamic>?;
+        final ajaxUrl = Uri.parse(
+          '$_baseUrl/es/module/leoproductsearch/productsearch?ajax=1&q=${Uri.encodeComponent(q)}',
+        );
 
-        if (products != null) {
-          for (final product in products) {
-            if (results.length >= limit) break;
+        final response = await http.get(
+          ajaxUrl,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36',
+            'Accept': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest',
+          },
+        ).timeout(const Duration(seconds: 15));
 
-            final productMap = product as Map<String, dynamic>;
-            String? coverUrl;
+        if (response.statusCode == 200) {
+          final data = json.decode(response.body) as Map<String, dynamic>;
+          final products = data['products'] as List<dynamic>?;
 
-            if (productMap['cover'] != null) {
-              final cover = productMap['cover'] as Map<String, dynamic>;
-              if (cover['large'] != null) {
-                coverUrl = (cover['large'] as Map<String, dynamic>)['url'] as String?;
-              } else if (cover['bySize'] != null) {
-                final bySize = cover['bySize'] as Map<String, dynamic>;
-                coverUrl = (bySize['large_default'] as Map<String, dynamic>?)?['url'] as String?;
-                coverUrl ??= (bySize['medium_default'] as Map<String, dynamic>?)?['url'] as String?;
+          if (products != null) {
+            for (final product in products) {
+              if (results.length >= limit) break;
+
+              final productMap = product as Map<String, dynamic>;
+              String? coverUrl;
+
+              if (productMap['cover'] != null) {
+                final cover = productMap['cover'] as Map<String, dynamic>;
+                if (cover['large'] != null) {
+                  coverUrl = (cover['large'] as Map<String, dynamic>)['url'] as String?;
+                } else if (cover['bySize'] != null) {
+                  final bySize = cover['bySize'] as Map<String, dynamic>;
+                  coverUrl = (bySize['large_default'] as Map<String, dynamic>?)?['url'] as String?;
+                  coverUrl ??= (bySize['medium_default'] as Map<String, dynamic>?)?['url'] as String?;
+                }
               }
-            }
 
-            if (coverUrl != null && coverUrl.isNotEmpty) {
-              // Asegurar versión large
-              coverUrl = coverUrl.replaceAll('-home_default/', '-large_default/');
-              coverUrl = coverUrl.replaceAll('-medium_default/', '-large_default/');
-              coverUrl = coverUrl.replaceAll('-small_default/', '-large_default/');
+              if (coverUrl != null && coverUrl.isNotEmpty) {
+                // Asegurar versión large
+                coverUrl = coverUrl.replaceAll('-home_default/', '-large_default/');
+                coverUrl = coverUrl.replaceAll('-medium_default/', '-large_default/');
+                coverUrl = coverUrl.replaceAll('-small_default/', '-large_default/');
 
-              if (!results.contains(coverUrl)) {
-                results.add(coverUrl);
-                debugPrint('TomosYGrapas: Portada encontrada: $coverUrl');
+                if (!results.contains(coverUrl)) {
+                  results.add(coverUrl);
+                  debugPrint('TomosYGrapas: Portada encontrada: $coverUrl');
+                }
               }
             }
           }
         }
+      } catch (e) {
+        debugPrint('TomosYGrapas searchCoversMultiple error: $e');
       }
-    } catch (e) {
-      debugPrint('TomosYGrapas searchCoversMultiple error: $e');
     }
 
     debugPrint('TomosYGrapas: ${results.length} portadas encontradas');
