@@ -314,23 +314,15 @@ class _GroupedBookGridState extends State<GroupedBookGrid> {
       final provider = context.read<BookProvider>();
       final lastBook = books.last;
 
-      // Buscar portada
-      String? coverUrl = await provider.searchCover(
-        series,
-        lastBook.author,
-        volumeNumber: nextVol,
-      );
-
       // Detectar si es omnibus
       final isOmnibus = RegExp(r'\d+\s*[Ee][Nn]\s*1').hasMatch(series);
       final nextTitle = isOmnibus ? '$series $nextVol' : '$series Vol. $nextVol';
 
-      // Crear el siguiente volumen en Leyendo
+      // PRIMERO añadir el libro sin portada (para que no falle si la búsqueda da error)
       final nextBook = Book(
         isbn: '${series.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '-')}-vol-$nextVol',
         title: nextTitle,
         author: lastBook.author,
-        coverUrl: coverUrl,
         status: 'reading',
         currentPage: 0,
         totalPages: lastBook.totalPages,
@@ -352,6 +344,24 @@ class _GroupedBookGridState extends State<GroupedBookGrid> {
             backgroundColor: added ? ComicTheme.powerGreen : ComicTheme.primaryOrange,
           ),
         );
+      }
+
+      // DESPUÉS buscar portada en segundo plano y actualizar
+      if (added) {
+        final addedBook = provider.readingBooks.firstWhere(
+          (b) => b.seriesName == series && b.volumeNumber == nextVol,
+          orElse: () => nextBook,
+        );
+        if (addedBook.id != null) {
+          final coverUrl = await provider.searchCover(
+            series,
+            lastBook.author,
+            volumeNumber: nextVol,
+          );
+          if (coverUrl != null && coverUrl.isNotEmpty && mounted) {
+            await provider.updateCoverUrl(addedBook.id!, coverUrl);
+          }
+        }
       }
     } catch (e) {
       if (mounted) {
