@@ -4,6 +4,7 @@ import '../config/api_keys.dart';
 import '../constants/translations.dart';
 import '../utils/volume_extractor.dart';
 import '../utils/query_generator.dart';
+import 'circuit_breaker.dart';
 import 'comic_type_detector.dart';
 import 'api_cache_service.dart';
 import 'api/marvel_api_client.dart';
@@ -33,6 +34,7 @@ class ComicSearchService {
   final SalvatClient _salvatClient = SalvatClient();
   final TebeosferaClient _tebeosferaClient = TebeosferaClient();
   final ApiCacheService _cache = ApiCacheService();
+  final CircuitBreaker _circuitBreaker = CircuitBreaker();
 
   /// Traduce un título español a inglés si existe traducción
   String? _translateToEnglish(String title) {
@@ -502,9 +504,14 @@ class ComicSearchService {
     }
   }
 
-  /// Intenta buscar en una fuente específica
+  /// Intenta buscar en una fuente específica (con circuit breaker)
   Future<Book?> _trySource(ApiSource source, String isbn, String? title) async {
+    if (_circuitBreaker.isOpen(source.name)) {
+      debugPrint('${source.name}: circuito abierto, saltando');
+      return null;
+    }
     try {
+      Book? result;
       switch (source) {
         case ApiSource.marvel:
           if (!ApiKeys.hasMarvelKeys) {
@@ -512,7 +519,8 @@ class ComicSearchService {
             return null;
           }
           // Marvel usa UPC en lugar de ISBN
-          return await _marvelClient.searchByUpc(isbn);
+          result = await _marvelClient.searchByUpc(isbn);
+          break;
 
         case ApiSource.comicVine:
           if (!ApiKeys.hasComicVineKey) {
@@ -520,20 +528,27 @@ class ComicSearchService {
             return null;
           }
           final results = await _comicVineClient.searchIssues(title ?? isbn);
-          return results.isNotEmpty ? results.first : null;
+          result = results.isNotEmpty ? results.first : null;
+          break;
 
         case ApiSource.mangaDex:
         case ApiSource.googleBooks:
         case ApiSource.openLibrary:
         case ApiSource.casaDelLibro:
           // Delegar al BookApiService existente
-          return await _bookApiService.searchByIsbn(isbn);
+          result = await _bookApiService.searchByIsbn(isbn);
+          break;
 
         case ApiSource.superHero:
           // SuperHero API no busca por ISBN, es solo para personajes
           return null;
       }
+      if (result != null) {
+        _circuitBreaker.recordSuccess(source.name);
+      }
+      return result;
     } catch (e) {
+      _circuitBreaker.recordFailure(source.name);
       debugPrint('Error en ${source.name}: $e');
       return null;
     }

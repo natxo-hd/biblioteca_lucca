@@ -1240,7 +1240,7 @@ class BookApiService {
   // Decodificar entidades HTML comunes
   String? _decodeHtmlEntities(String? text) {
     if (text == null) return null;
-    return text
+    var result = text
         .replaceAll('&amp;', '&')
         .replaceAll('&lt;', '<')
         .replaceAll('&gt;', '>')
@@ -1262,7 +1262,30 @@ class BookApiService {
         .replaceAll('&Uacute;', 'Ú')
         .replaceAll('&uuml;', 'ü')
         .replaceAll('&Uuml;', 'Ü')
-        .trim();
+        .replaceAll('&hellip;', '…')
+        .replaceAll('&bull;', '•')
+        .replaceAll('&deg;', '°')
+        .replaceAll('&copy;', '©')
+        .replaceAll('&reg;', '®')
+        .replaceAll('&trade;', '™')
+        .replaceAll('&mdash;', '—')
+        .replaceAll('&ndash;', '–')
+        .replaceAll('&laquo;', '«')
+        .replaceAll('&raquo;', '»')
+        .replaceAll('&iquest;', '¿')
+        .replaceAll('&iexcl;', '¡')
+        .replaceAll('&ccedil;', 'ç')
+        .replaceAll('&Ccedil;', 'Ç');
+    // Decodificar entidades numéricas (&#123; y &#x1F;)
+    result = result.replaceAllMapped(
+      RegExp(r'&#(\d+);'),
+      (m) => String.fromCharCode(int.parse(m.group(1)!)),
+    );
+    result = result.replaceAllMapped(
+      RegExp(r'&#x([0-9a-fA-F]+);'),
+      (m) => String.fromCharCode(int.parse(m.group(1)!, radix: 16)),
+    );
+    return result.trim();
   }
 
   // Buscar por título (alternativa si no se encuentra por ISBN)

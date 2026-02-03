@@ -182,6 +182,11 @@ class FirestoreService {
       'nextVolumeIsbn': book.nextVolumeIsbn,
       'nextVolumeTitle': book.nextVolumeTitle,
       'nextVolumeCover': book.nextVolumeCover,
+      'isArchived': book.isArchived,
+      'publisher': book.publisher,
+      'comicUniverse': book.comicUniverse,
+      'apiSource': book.apiSource,
+      'sourceUrl': book.sourceUrl,
       'lastModified': FieldValue.serverTimestamp(),
     };
   }
@@ -202,6 +207,11 @@ class FirestoreService {
       nextVolumeIsbn: data['nextVolumeIsbn'],
       nextVolumeTitle: data['nextVolumeTitle'],
       nextVolumeCover: data['nextVolumeCover'],
+      isArchived: data['isArchived'] == true,
+      publisher: data['publisher'] as String?,
+      comicUniverse: data['comicUniverse'] as String?,
+      apiSource: data['apiSource'] as String?,
+      sourceUrl: data['sourceUrl'] as String?,
     );
   }
 }

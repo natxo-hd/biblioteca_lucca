@@ -97,6 +97,9 @@ class BookProvider extends ChangeNotifier {
       debugPrint('🧹 Eliminados $duplicatesRemoved libros duplicados');
     }
 
+    // Purgar entradas antiguas de deleted_books (>90 días)
+    await _dbService.purgeOldDeletedBooks();
+
     // Cargar solo libros NO archivados en las listas principales
     _readingBooks = await _dbService.getActiveBooksByStatus('reading');
     _finishedBooks = await _dbService.getActiveBooksByStatus('finished');
@@ -314,6 +317,8 @@ class BookProvider extends ChangeNotifier {
         await _dbService.markAsSynced(id);
       } catch (e) {
         debugPrint('Error sincronizando nuevo libro: $e');
+        // Marcar como pendiente para reintentar cuando haya conexión
+        await _dbService.updateBook(newBook.copyWith(pendingSync: true));
       }
     }
 
@@ -371,6 +376,8 @@ class BookProvider extends ChangeNotifier {
         await _dbService.markAsSynced(id);
       } catch (e) {
         debugPrint('Error sincronizando libro importado: $e');
+        // Marcar como pendiente para reintentar cuando haya conexión
+        await _dbService.updateBook(newBook.copyWith(pendingSync: true));
       }
     }
 
@@ -649,6 +656,7 @@ class BookProvider extends ChangeNotifier {
       }
       if (book.isbn.isNotEmpty) {
         await _dbService.markAsDeleted(book.isbn);
+        await _imageStorage.deleteCover(book.isbn);
       }
 
       // Eliminar de la nube si hay conexión
@@ -709,6 +717,11 @@ class BookProvider extends ChangeNotifier {
     );
 
     await _dbService.deleteBook(bookId);
+
+    // Eliminar portada local si existe
+    if (bookToDelete.isbn.isNotEmpty) {
+      await _imageStorage.deleteCover(bookToDelete.isbn);
+    }
 
     // Marcar como eliminado para evitar re-sync desde la nube
     if (bookToDelete.isbn.isNotEmpty) {
@@ -1028,12 +1041,14 @@ class BookProvider extends ChangeNotifier {
       // Actualizar en las listas locales
       final readingIndex = _readingBooks.indexWhere((b) => b.id == book.id);
       if (readingIndex != -1) {
-        _readingBooks[readingIndex] = bookWithSeries.copyWith(id: book.id);
+        _readingBooks = List.from(_readingBooks)
+          ..[readingIndex] = bookWithSeries.copyWith(id: book.id);
       }
 
       final finishedIndex = _finishedBooks.indexWhere((b) => b.id == book.id);
       if (finishedIndex != -1) {
-        _finishedBooks[finishedIndex] = bookWithSeries.copyWith(id: book.id);
+        _finishedBooks = List.from(_finishedBooks)
+          ..[finishedIndex] = bookWithSeries.copyWith(id: book.id);
       }
 
       notifyListeners();

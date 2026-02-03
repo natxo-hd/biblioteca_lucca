@@ -516,6 +516,17 @@ class DatabaseService {
     );
   }
 
+  /// Purga entradas antiguas de deleted_books (más de 90 días)
+  Future<int> purgeOldDeletedBooks() async {
+    final db = await database;
+    final cutoff = DateTime.now().subtract(const Duration(days: 90)).toIso8601String();
+    return await db.delete(
+      'deleted_books',
+      where: 'deletedAt < ?',
+      whereArgs: [cutoff],
+    );
+  }
+
   /// Obtiene todos los ISBNs eliminados
   Future<List<String>> getDeletedIsbns() async {
     final db = await database;
