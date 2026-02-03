@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import '../models/book.dart';
 import '../config/api_keys.dart';
 import '../constants/translations.dart';
@@ -438,12 +440,31 @@ class ComicSearchService {
     var cover = await _bookApiService.searchCover(title, author);
     if (cover != null && cover.isNotEmpty) return cover;
 
-    // Último intento con inglés
+    // Último intento con inglés (BookApiService usa langRestrict=es, probarlo igual)
     if (englishTitle != null) {
       cover = await _bookApiService.searchCover(englishTitle, author);
       if (cover != null && cover.isNotEmpty) {
         _cache.setCover(cacheKey, cover);
         return cover;
+      }
+    }
+
+    // ÚLTIMO RECURSO: Google Books SIN restricción de idioma
+    // BookApiService usa langRestrict=es que filtra resultados ingleses.
+    // Para series como "Hay Algo Matando Niños" la portada solo está en
+    // Google Books en inglés como "Something is Killing the Children".
+    if (englishTitle != null && volumeNumber != null) {
+      final engQueries = [
+        '$englishTitle $volumeNumber',
+        '$englishTitle vol $volumeNumber',
+      ];
+      for (final q in engQueries) {
+        cover = await _searchGoogleBooksInternational(q);
+        if (cover != null && cover.isNotEmpty) {
+          debugPrint('Portada encontrada en Google Books (intl): $cover');
+          _cache.setCover(cacheKey, cover);
+          return cover;
+        }
       }
     }
 
@@ -694,5 +715,38 @@ class ComicSearchService {
         'description': 'Libros generales (gratis)',
       },
     };
+  }
+
+  /// Busca portada en Google Books SIN restricción de idioma.
+  /// Útil para series que solo tienen portada en inglés en Google Books
+  /// (ej: "Something is Killing the Children" no está en español).
+  Future<String?> _searchGoogleBooksInternational(String query) async {
+    try {
+      debugPrint('🌍 Google Books (sin langRestrict): "$query"');
+      final url = Uri.parse(
+        'https://www.googleapis.com/books/v1/volumes?q=${Uri.encodeComponent(query)}&maxResults=3',
+      );
+      final response = await http.get(url).timeout(const Duration(seconds: 8));
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final items = data['items'] as List? ?? [];
+        for (final item in items) {
+          final volumeInfo = item['volumeInfo'] as Map<String, dynamic>?;
+          if (volumeInfo == null) continue;
+          final imageLinks = volumeInfo['imageLinks'] as Map<String, dynamic>?;
+          if (imageLinks == null) continue;
+          var imgUrl = imageLinks['thumbnail'] as String? ??
+              imageLinks['smallThumbnail'] as String?;
+          if (imgUrl != null) {
+            imgUrl = imgUrl.replaceAll('http://', 'https://');
+            imgUrl = imgUrl.replaceAll('zoom=1', 'zoom=3');
+            return imgUrl;
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Google Books (intl) error: $e');
+    }
+    return null;
   }
 }
