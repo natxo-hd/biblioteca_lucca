@@ -6,11 +6,13 @@ import '../models/book.dart';
 class PreviousVolumesDialog extends StatefulWidget {
   final Book book;
   final int currentVolume;
+  final Set<int> existingVolumes;
 
   const PreviousVolumesDialog({
     super.key,
     required this.book,
     required this.currentVolume,
+    this.existingVolumes = const {},
   });
 
   @override
@@ -21,19 +23,37 @@ class _PreviousVolumesDialogState extends State<PreviousVolumesDialog> {
   late List<bool> _selectedVolumes;
   bool _selectAll = true;
 
+  /// Volúmenes que faltan (no están en la biblioteca)
+  late List<int> _missingVolumes;
+
   @override
   void initState() {
     super.initState();
-    // Inicialmente todos seleccionados
-    _selectedVolumes = List.generate(widget.currentVolume - 1, (_) => true);
+    _missingVolumes = [];
+    for (int i = 1; i < widget.currentVolume; i++) {
+      if (!widget.existingVolumes.contains(i)) {
+        _missingVolumes.add(i);
+      }
+    }
+    // Solo los que faltan están seleccionados por defecto
+    _selectedVolumes = List.generate(widget.currentVolume - 1, (index) {
+      final volNum = index + 1;
+      return !widget.existingVolumes.contains(volNum);
+    });
   }
 
   int get _selectedCount => _selectedVolumes.where((s) => s).length;
 
+  bool _isExisting(int volumeNum) => widget.existingVolumes.contains(volumeNum);
+
   void _toggleSelectAll() {
     setState(() {
       _selectAll = !_selectAll;
-      _selectedVolumes = List.generate(widget.currentVolume - 1, (_) => _selectAll);
+      _selectedVolumes = List.generate(widget.currentVolume - 1, (index) {
+        final volNum = index + 1;
+        if (_isExisting(volNum)) return false; // Los existentes nunca se seleccionan
+        return _selectAll;
+      });
     });
   }
 
@@ -51,7 +71,10 @@ class _PreviousVolumesDialogState extends State<PreviousVolumesDialog> {
   Widget build(BuildContext context) {
     final seriesName = widget.book.seriesName ?? widget.book.title;
     final previousCount = widget.currentVolume - 1;
-    final showList = previousCount > 3;
+    final existingCount = widget.existingVolumes.length;
+    final missingCount = _missingVolumes.length;
+    // Mostrar lista si hay más de 3 volúmenes O si hay volúmenes existentes
+    final showList = previousCount > 3 || existingCount > 0;
 
     return Dialog(
       shape: RoundedRectangleBorder(
@@ -127,33 +150,72 @@ class _PreviousVolumesDialogState extends State<PreviousVolumesDialog> {
                     ),
                     const SizedBox(height: 12),
 
-                    Text(
-                      previousCount == 1
-                          ? '¿Ya leíste el volumen 1?'
-                          : '¿Ya leíste los $previousCount volúmenes anteriores?',
-                      style: GoogleFonts.comicNeue(
-                        fontSize: 15,
-                        fontWeight: FontWeight.bold,
+                    // Mensaje adaptado según volúmenes existentes
+                    if (missingCount == 0) ...[
+                      Text(
+                        '¡Ya tienes todos los anteriores!',
+                        style: GoogleFonts.comicNeue(
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
+                          color: ComicTheme.powerGreen,
+                        ),
+                        textAlign: TextAlign.center,
                       ),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Los añadiremos como completados',
-                      style: GoogleFonts.comicNeue(
-                        fontSize: 13,
-                        color: Colors.grey[600],
+                      const SizedBox(height: 4),
+                      Text(
+                        'Los $existingCount volúmenes anteriores ya están en tu biblioteca',
+                        style: GoogleFonts.comicNeue(
+                          fontSize: 13,
+                          color: Colors.grey[600],
+                        ),
+                        textAlign: TextAlign.center,
                       ),
-                    ),
+                    ] else if (existingCount > 0) ...[
+                      Text(
+                        'Tienes $existingCount de $previousCount. ¿Añadir los $missingCount que faltan?',
+                        style: GoogleFonts.comicNeue(
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Los añadiremos como completados',
+                        style: GoogleFonts.comicNeue(
+                          fontSize: 13,
+                          color: Colors.grey[600],
+                        ),
+                      ),
+                    ] else ...[
+                      Text(
+                        previousCount == 1
+                            ? '¿Ya leíste el volumen 1?'
+                            : '¿Ya leíste los $previousCount volúmenes anteriores?',
+                        style: GoogleFonts.comicNeue(
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Los añadiremos como completados',
+                        style: GoogleFonts.comicNeue(
+                          fontSize: 13,
+                          color: Colors.grey[600],
+                        ),
+                      ),
+                    ],
 
-                    // Lista de volúmenes si hay más de 3
-                    if (showList) ...[
+                    // Lista de volúmenes
+                    if (showList && missingCount > 0) ...[
                       const SizedBox(height: 12),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Text(
-                            '$_selectedCount de $previousCount seleccionados',
+                            '$_selectedCount seleccionados',
                             style: GoogleFonts.comicNeue(
                               fontSize: 12,
                               color: Colors.grey[600],
@@ -188,12 +250,45 @@ class _PreviousVolumesDialogState extends State<PreviousVolumesDialog> {
                           itemCount: previousCount,
                           itemBuilder: (context, index) {
                             final volumeNum = index + 1;
+                            final isOwned = _isExisting(volumeNum);
+
+                            if (isOwned) {
+                              // Volumen ya en biblioteca: deshabilitado con indicador
+                              return ListTile(
+                                leading: const Icon(
+                                  Icons.check_circle,
+                                  color: ComicTheme.powerGreen,
+                                  size: 24,
+                                ),
+                                title: Text(
+                                  'Volumen $volumeNum',
+                                  style: GoogleFonts.comicNeue(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.grey[500],
+                                  ),
+                                ),
+                                subtitle: Text(
+                                  'Ya en tu biblioteca',
+                                  style: GoogleFonts.comicNeue(
+                                    fontSize: 11,
+                                    color: ComicTheme.powerGreen,
+                                  ),
+                                ),
+                                dense: true,
+                                visualDensity: VisualDensity.compact,
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                              );
+                            }
+
                             return CheckboxListTile(
                               value: _selectedVolumes[index],
                               onChanged: (value) {
                                 setState(() {
                                   _selectedVolumes[index] = value ?? false;
-                                  _selectAll = _selectedVolumes.every((s) => s);
+                                  _selectAll = _missingVolumes.every(
+                                    (v) => _selectedVolumes[v - 1],
+                                  );
                                 });
                               },
                               title: Text(
@@ -239,36 +334,38 @@ class _PreviousVolumesDialogState extends State<PreviousVolumesDialog> {
                         ),
                       ),
                       child: Text(
-                        'NO',
+                        missingCount == 0 ? 'CERRAR' : 'NO',
                         style: GoogleFonts.bangers(fontSize: 16),
                       ),
                     ),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    flex: 2,
-                    child: ElevatedButton.icon(
-                      onPressed: _selectedCount > 0 ? _onConfirm : null,
-                      icon: const Icon(Icons.check, size: 18),
-                      label: Text(
-                        showList ? '¡AÑADIR $_selectedCount!' : '¡SÍ, TODOS!',
-                        style: GoogleFonts.bangers(fontSize: 15),
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: ComicTheme.powerGreen,
-                        foregroundColor: Colors.white,
-                        disabledBackgroundColor: Colors.grey[300],
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          side: const BorderSide(
-                            color: ComicTheme.comicBorder,
-                            width: 2,
+                  if (missingCount > 0) ...[
+                    const SizedBox(width: 12),
+                    Expanded(
+                      flex: 2,
+                      child: ElevatedButton.icon(
+                        onPressed: _selectedCount > 0 ? _onConfirm : null,
+                        icon: const Icon(Icons.check, size: 18),
+                        label: Text(
+                          showList ? '¡AÑADIR $_selectedCount!' : '¡SÍ, TODOS!',
+                          style: GoogleFonts.bangers(fontSize: 15),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: ComicTheme.powerGreen,
+                          foregroundColor: Colors.white,
+                          disabledBackgroundColor: Colors.grey[300],
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            side: const BorderSide(
+                              color: ComicTheme.comicBorder,
+                              width: 2,
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
+                  ],
                 ],
               ),
             ),
@@ -284,6 +381,7 @@ Future<List<int>?> showPreviousVolumesDialog(
   BuildContext context, {
   required Book book,
   required int currentVolume,
+  Set<int> existingVolumes = const {},
 }) async {
   // Solo mostrar si el volumen es mayor que 1
   if (currentVolume <= 1) return null;
@@ -294,6 +392,7 @@ Future<List<int>?> showPreviousVolumesDialog(
     builder: (context) => PreviousVolumesDialog(
       book: book,
       currentVolume: currentVolume,
+      existingVolumes: existingVolumes,
     ),
   );
 }

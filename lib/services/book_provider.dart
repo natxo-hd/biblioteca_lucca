@@ -251,6 +251,11 @@ class BookProvider extends ChangeNotifier {
     return await _comicSearchService.searchCover(title, author, volumeNumber: volumeNumber);
   }
 
+  /// Devuelve los volúmenes que ya existen en la biblioteca para una serie
+  Future<Set<int>> getExistingVolumeNumbers(String seriesName) async {
+    return await _dbService.getExistingVolumeNumbers(seriesName);
+  }
+
   /// Obtiene el estado de las APIs configuradas
   Future<Map<String, dynamic>> getApiStatus() async {
     return await _comicSearchService.getApiStatus();
@@ -805,75 +810,84 @@ class BookProvider extends ChangeNotifier {
 
     // PASO 2: Crear libros con ISBN real o sintético
     for (final volNum in volumeNumbers) {
-      // Comprobar si tenemos datos reales de T&G para este volumen
-      final volumeData = seriesVolumes[volNum];
-      final hasRealData = volumeData != null && volumeData['isbn'] != null && volumeData['isbn']!.isNotEmpty;
+      try {
+        // Comprobar si tenemos datos reales de T&G para este volumen
+        final volumeData = seriesVolumes[volNum];
+        final hasRealData = volumeData != null && volumeData['isbn'] != null && volumeData['isbn']!.isNotEmpty;
 
-      String isbn;
-      String? coverUrl;
-      String? sourceUrl;
-      String volumeTitle;
+        String isbn;
+        String? coverUrl;
+        String? sourceUrl;
+        String volumeTitle;
 
-      if (hasRealData) {
-        // Usar datos reales de T&G
-        isbn = volumeData!['isbn']!;
-        coverUrl = volumeData['coverUrl'];
-        sourceUrl = volumeData['productUrl'];
-        volumeTitle = volumeData['title'] ?? (isOmnibus ? '$seriesName $volNum' : '$seriesName Vol. $volNum');
-        debugPrint('✅ Vol.$volNum: ISBN real $isbn');
-      } else {
-        // Usar ISBN sintético
-        isbn = '${seriesName.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '-')}-vol-$volNum';
-        volumeTitle = isOmnibus ? '$seriesName $volNum' : '$seriesName Vol. $volNum';
-        debugPrint('⚠️ Vol.$volNum: ISBN sintético (no encontrado en T&G)');
-      }
+        if (hasRealData) {
+          // Usar datos reales de T&G
+          isbn = volumeData!['isbn']!;
+          coverUrl = volumeData['coverUrl'];
+          sourceUrl = volumeData['productUrl'];
+          volumeTitle = volumeData['title'] ?? (isOmnibus ? '$seriesName $volNum' : '$seriesName Vol. $volNum');
+          debugPrint('✅ Vol.$volNum: ISBN real $isbn');
+        } else {
+          // Usar ISBN sintético
+          isbn = '${seriesName.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '-')}-vol-$volNum';
+          volumeTitle = isOmnibus ? '$seriesName $volNum' : '$seriesName Vol. $volNum';
+          debugPrint('⚠️ Vol.$volNum: ISBN sintético (no encontrado en T&G)');
+        }
 
-      // Verificar si ya existe por ISBN
-      final existingByIsbn = await _dbService.getBookByIsbn(isbn);
-      if (existingByIsbn != null) {
-        debugPrint('📌 Vol.$volNum ya existe con ISBN $isbn, saltando...');
-        continue;
-      }
+        // Verificar si ya existe por ISBN
+        final existingByIsbn = await _dbService.getBookByIsbn(isbn);
+        if (existingByIsbn != null) {
+          debugPrint('📌 Vol.$volNum ya existe con ISBN $isbn, saltando...');
+          continue;
+        }
 
-      // Verificar también por serie + número de volumen (evita duplicados)
-      final existingInSeries = await _dbService.getBookBySeriesAndVolume(seriesName, volNum);
-      if (existingInSeries != null) {
-        debugPrint('📌 Vol.$volNum ya existe en la serie, saltando...');
-        continue;
-      }
+        // Verificar también por serie + número de volumen (evita duplicados)
+        final existingInSeries = await _dbService.getBookBySeriesAndVolume(seriesName, volNum);
+        if (existingInSeries != null) {
+          debugPrint('📌 Vol.$volNum ya existe en la serie, saltando...');
+          continue;
+        }
 
-      // Descargar y guardar la portada localmente si tenemos URL
-      String? localCoverPath;
-      if (coverUrl != null && coverUrl.isNotEmpty) {
-        localCoverPath = await _imageStorage.downloadAndSave(coverUrl, isbn);
-      }
+        // Descargar y guardar la portada localmente si tenemos URL
+        String? localCoverPath;
+        if (coverUrl != null && coverUrl.isNotEmpty) {
+          try {
+            localCoverPath = await _imageStorage.downloadAndSave(coverUrl, isbn);
+          } catch (e) {
+            debugPrint('⚠️ Error descargando portada Vol.$volNum: $e');
+          }
+        }
 
-      // Crear el libro
-      final volumeBook = Book(
-        isbn: isbn,
-        title: volumeTitle,
-        author: baseBook.author,
-        coverUrl: coverUrl,
-        localCoverPath: localCoverPath,
-        status: 'finished',
-        currentPage: 0,
-        totalPages: baseBook.totalPages,
-        seriesName: seriesName,
-        volumeNumber: volNum,
-        publisher: baseBook.publisher,
-        apiSource: hasRealData ? 'tomosygrapas' : null,
-        sourceUrl: sourceUrl,
-        pendingSync: !(_syncService?.isOnline ?? false),
-      );
+        // Crear el libro
+        final volumeBook = Book(
+          isbn: isbn,
+          title: volumeTitle,
+          author: baseBook.author,
+          coverUrl: coverUrl,
+          localCoverPath: localCoverPath,
+          status: 'finished',
+          currentPage: 0,
+          totalPages: baseBook.totalPages,
+          seriesName: seriesName,
+          volumeNumber: volNum,
+          publisher: baseBook.publisher,
+          apiSource: hasRealData ? 'tomosygrapas' : null,
+          sourceUrl: sourceUrl,
+          pendingSync: !(_syncService?.isOnline ?? false),
+        );
 
-      final id = await _dbService.insertBook(volumeBook);
-      final newBook = volumeBook.copyWith(id: id);
-      addedBooks.add(newBook);
-      addedCount++;
+        final id = await _dbService.insertBook(volumeBook);
+        final newBook = volumeBook.copyWith(id: id);
+        addedBooks.add(newBook);
+        addedCount++;
 
-      // Si no tiene portada, añadir a la lista para buscar después
-      if (coverUrl == null || coverUrl.isEmpty) {
-        booksNeedingCovers.add(newBook);
+        // Si no tiene portada, añadir a la lista para buscar después
+        if (coverUrl == null || coverUrl.isEmpty) {
+          booksNeedingCovers.add(newBook);
+        }
+      } catch (e) {
+        debugPrint('❌ Error añadiendo Vol.$volNum: $e');
+        // Continuar con el siguiente volumen
       }
     }
 

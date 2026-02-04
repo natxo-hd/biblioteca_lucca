@@ -240,10 +240,17 @@ class _ScannerScreenState extends State<ScannerScreen>
     if (success) {
       final volumeNumber = bookToAdd.volumeNumber;
       if (volumeNumber != null && volumeNumber > 1) {
+        // Consultar qué volúmenes ya existen en la biblioteca
+        final seriesName = bookToAdd.seriesName ?? bookToAdd.title;
+        final existingVolumes = await provider.getExistingVolumeNumbers(seriesName);
+
+        if (!mounted) return;
+
         final previousVolumes = await showPreviousVolumesDialog(
           context,
           book: bookToAdd,
           currentVolume: volumeNumber,
+          existingVolumes: existingVolumes,
         );
 
         if (previousVolumes != null && previousVolumes.isNotEmpty && mounted) {

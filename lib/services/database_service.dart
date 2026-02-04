@@ -267,6 +267,33 @@ class DatabaseService {
     return null;
   }
 
+  /// Devuelve los números de volumen que ya existen en la biblioteca para una serie
+  Future<Set<int>> getExistingVolumeNumbers(String seriesName) async {
+    final db = await database;
+    final normalizedSeries = _normalizeSeriesName(seriesName);
+
+    final List<Map<String, dynamic>> maps = await db.query(
+      'books',
+      columns: ['volumeNumber', 'seriesName', 'title'],
+      where: 'volumeNumber IS NOT NULL',
+    );
+
+    final existing = <int>{};
+    for (final map in maps) {
+      final bookSeries = map['seriesName'] as String?;
+      final title = map['title'] as String;
+      final volNum = map['volumeNumber'] as int;
+
+      if (bookSeries != null && _normalizeSeriesName(bookSeries) == normalizedSeries) {
+        existing.add(volNum);
+      } else if (_normalizeSeriesName(title).contains(normalizedSeries)) {
+        existing.add(volNum);
+      }
+    }
+
+    return existing;
+  }
+
   /// Normaliza el nombre de serie para comparación
   String _normalizeSeriesName(String name) {
     return name
