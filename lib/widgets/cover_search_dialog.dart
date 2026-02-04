@@ -4,7 +4,6 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 import '../theme/comic_theme.dart';
-import '../services/book_api_service.dart';
 import '../services/api/tomosygrapas_client.dart';
 import '../constants/translations.dart';
 
@@ -31,7 +30,6 @@ class CoverSearchDialog extends StatefulWidget {
 
 class _CoverSearchDialogState extends State<CoverSearchDialog> {
   final _searchController = TextEditingController();
-  final _apiService = BookApiService();
   final _tomosYGrapas = TomosYGrapasClient();
 
   List<String> _coverResults = [];
@@ -203,11 +201,11 @@ class _CoverSearchDialogState extends State<CoverSearchDialog> {
       }());
     }
 
-    // Google Books (español via BookApiService)
+    // Google Books (query español directo → ISBNs españoles → CDL)
     searches.add(() async {
       try {
-        final cover = await _apiService.searchCover(query, widget.author);
-        if (cover != null && cover.isNotEmpty) addCovers([cover]);
+        final covers = await _searchGoogleBooksCovers(query);
+        addCovers(covers);
       } catch (e) {
         debugPrint('GoogleBooks ES error: $e');
       }
@@ -375,18 +373,44 @@ class _CoverSearchDialogState extends State<CoverSearchDialog> {
     return covers;
   }
 
-  /// Busca portadas directamente en Google Books (sin restricción de idioma)
+  /// Busca portadas en Google Books: extrae ISBNs españoles → CDL + thumbnails
   Future<List<String>> _searchGoogleBooksCovers(String query) async {
     final covers = <String>[];
     try {
       debugPrint('🔍 Google Books (intl): "$query"');
       final url = Uri.parse(
-        'https://www.googleapis.com/books/v1/volumes?q=${Uri.encodeComponent(query)}&maxResults=5',
+        'https://www.googleapis.com/books/v1/volumes?q=${Uri.encodeComponent(query)}&maxResults=10',
       );
       final response = await http.get(url).timeout(const Duration(seconds: 8));
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         final items = data['items'] as List? ?? [];
+
+        // Primero: extraer ISBNs españoles → portada CDL (mayor calidad)
+        final checkedIsbns = <String>{};
+        for (final item in items) {
+          final volumeInfo = item['volumeInfo'] as Map<String, dynamic>?;
+          if (volumeInfo == null) continue;
+          final identifiers = volumeInfo['industryIdentifiers'] as List? ?? [];
+          for (final id in identifiers) {
+            final isbn = id['identifier'] as String?;
+            if (isbn != null && isbn.startsWith('97884') && !checkedIsbns.contains(isbn)) {
+              checkedIsbns.add(isbn);
+              final cdlUrl = _buildCasaDelLibroCoverUrl(isbn);
+              try {
+                final imgResp = await http.head(Uri.parse(cdlUrl))
+                    .timeout(const Duration(seconds: 3));
+                if (imgResp.statusCode == 200) {
+                  covers.add(cdlUrl);
+                  debugPrint('🏠 Google Books ISBN $isbn → CDL: $cdlUrl');
+                }
+              } catch (_) {}
+            }
+          }
+          if (covers.length >= 3) break;
+        }
+
+        // Después: thumbnails de Google Books
         for (final item in items) {
           final volumeInfo = item['volumeInfo'] as Map<String, dynamic>?;
           if (volumeInfo == null) continue;
