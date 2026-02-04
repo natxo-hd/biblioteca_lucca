@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:provider/provider.dart';
@@ -243,6 +244,7 @@ class _ScannerScreenState extends State<ScannerScreen>
         // Consultar qué volúmenes ya existen en la biblioteca
         final seriesName = bookToAdd.seriesName ?? bookToAdd.title;
         final existingVolumes = await provider.getExistingVolumeNumbers(seriesName);
+        debugPrint('📋 Diálogo vol. anteriores: serie="$seriesName" vol=$volumeNumber existentes=$existingVolumes');
 
         if (!mounted) return;
 

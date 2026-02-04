@@ -71,7 +71,10 @@ class _PreviousVolumesDialogState extends State<PreviousVolumesDialog> {
   Widget build(BuildContext context) {
     final seriesName = widget.book.seriesName ?? widget.book.title;
     final previousCount = widget.currentVolume - 1;
-    final existingCount = widget.existingVolumes.length;
+    // Solo contar existentes que están en el rango 1..currentVolume-1
+    final existingCount = widget.existingVolumes
+        .where((v) => v >= 1 && v < widget.currentVolume)
+        .length;
     final missingCount = _missingVolumes.length;
     // Mostrar lista si hay más de 3 volúmenes O si hay volúmenes existentes
     final showList = previousCount > 3 || existingCount > 0;

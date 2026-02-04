@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import '../models/book.dart';
@@ -272,10 +273,13 @@ class DatabaseService {
     final db = await database;
     final normalizedSeries = _normalizeSeriesName(seriesName);
 
+    debugPrint('🔍 getExistingVolumeNumbers: "$seriesName" → normalized: "$normalizedSeries"');
+
+    // Solo libros activos (no archivados)
     final List<Map<String, dynamic>> maps = await db.query(
       'books',
-      columns: ['volumeNumber', 'seriesName', 'title'],
-      where: 'volumeNumber IS NOT NULL',
+      columns: ['volumeNumber', 'seriesName', 'title', 'isbn'],
+      where: 'volumeNumber IS NOT NULL AND isArchived = 0',
     );
 
     final existing = <int>{};
@@ -283,14 +287,21 @@ class DatabaseService {
       final bookSeries = map['seriesName'] as String?;
       final title = map['title'] as String;
       final volNum = map['volumeNumber'] as int;
+      final isbn = map['isbn'] as String?;
 
-      if (bookSeries != null && _normalizeSeriesName(bookSeries) == normalizedSeries) {
+      final normalizedBookSeries = bookSeries != null ? _normalizeSeriesName(bookSeries) : null;
+      final normalizedTitle = _normalizeSeriesName(title);
+
+      if (normalizedBookSeries != null && normalizedBookSeries == normalizedSeries) {
         existing.add(volNum);
-      } else if (_normalizeSeriesName(title).contains(normalizedSeries)) {
+        debugPrint('  ✅ Vol.$volNum encontrado (por serie): "$bookSeries" isbn=$isbn');
+      } else if (normalizedTitle == normalizedSeries) {
         existing.add(volNum);
+        debugPrint('  ✅ Vol.$volNum encontrado (por título): "$title" isbn=$isbn');
       }
     }
 
+    debugPrint('📊 Volúmenes existentes para "$seriesName": $existing');
     return existing;
   }
 
