@@ -5,6 +5,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../models/book.dart';
 import '../theme/comic_theme.dart';
 import '../services/book_api_service.dart';
+import '../widgets/cover_search_dialog.dart';
 
 class BookConfirmScreen extends StatefulWidget {
   final Book detectedBook;
@@ -51,6 +52,13 @@ class _BookConfirmScreenState extends State<BookConfirmScreen> {
           : '',
     );
     _coverUrl = widget.detectedBook.coverUrl;
+
+    // Auto-buscar portada si no tiene
+    if (_coverUrl == null || _coverUrl!.isEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _autoSearchCover();
+      });
+    }
   }
 
   @override
@@ -582,7 +590,9 @@ class _BookConfirmScreenState extends State<BookConfirmScreen> {
     return null;
   }
 
-  Future<void> _searchNewCover() async {
+  /// Búsqueda automática en background (se lanza al abrir si no hay portada)
+  Future<void> _autoSearchCover() async {
+    if (!mounted) return;
     setState(() => _searchingCover = true);
 
     try {
@@ -594,24 +604,19 @@ class _BookConfirmScreenState extends State<BookConfirmScreen> {
 
       String? newCover;
 
-      // 1. Primero buscar por ISBN en Casa del Libro (mejor para manga español)
+      // 1. Por ISBN en Casa del Libro
       if (isbn.isNotEmpty) {
         newCover = await apiService.searchCoverByIsbn(isbn);
       }
 
-      // 2. Si no encuentra, intentar con título + volumen
+      // 2. Con título + volumen
       if ((newCover == null || newCover.isEmpty) && volume.isNotEmpty) {
         newCover = await apiService.searchCover('$title Vol $volume', author);
       }
 
-      // 3. Si no encuentra, intentar solo con título
+      // 3. Solo título
       if (newCover == null || newCover.isEmpty) {
         newCover = await apiService.searchCover(title, author);
-      }
-
-      // 4. Si aún no encuentra, intentar con título + "manga"
-      if (newCover == null || newCover.isEmpty) {
-        newCover = await apiService.searchCover('$title manga', author);
       }
 
       if (mounted) {
@@ -621,23 +626,35 @@ class _BookConfirmScreenState extends State<BookConfirmScreen> {
           }
           _searchingCover = false;
         });
-
-        if (newCover == null || newCover.isEmpty) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'No se encontró otra portada',
-                style: GoogleFonts.comicNeue(fontWeight: FontWeight.bold),
-              ),
-              backgroundColor: ComicTheme.primaryOrange,
-            ),
-          );
-        }
       }
     } catch (e) {
       if (mounted) {
         setState(() => _searchingCover = false);
       }
+    }
+  }
+
+  /// Búsqueda manual: abre el diálogo con múltiples resultados para elegir
+  Future<void> _searchNewCover() async {
+    final seriesName = _seriesController.text.trim().isNotEmpty
+        ? _seriesController.text.trim()
+        : _titleController.text.trim();
+    final volNum = int.tryParse(_volumeController.text.trim());
+    final searchQuery = volNum != null
+        ? '$seriesName ${volNum.toString().padLeft(2, '0')}'
+        : seriesName;
+
+    final selectedCover = await showCoverSearchDialog(
+      context,
+      initialQuery: searchQuery,
+      author: _authorController.text.trim(),
+      volumeNumber: volNum,
+      currentCoverUrl: _coverUrl,
+      isbn: widget.detectedBook.isbn,
+    );
+
+    if (selectedCover != null && selectedCover.isNotEmpty && mounted) {
+      setState(() => _coverUrl = selectedCover);
     }
   }
 

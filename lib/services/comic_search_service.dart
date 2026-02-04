@@ -449,10 +449,17 @@ class ComicSearchService {
       }
     }
 
+    // OPEN LIBRARY: Excelente fuente para cómics internacionales
+    if (englishTitle != null && volumeNumber != null) {
+      cover = await _searchOpenLibraryCover('$englishTitle vol $volumeNumber');
+      if (cover != null && cover.isNotEmpty) {
+        debugPrint('Portada encontrada en Open Library: $cover');
+        _cache.setCover(cacheKey, cover);
+        return cover;
+      }
+    }
+
     // ÚLTIMO RECURSO: Google Books SIN restricción de idioma
-    // BookApiService usa langRestrict=es que filtra resultados ingleses.
-    // Para series como "Hay Algo Matando Niños" la portada solo está en
-    // Google Books en inglés como "Something is Killing the Children".
     if (englishTitle != null && volumeNumber != null) {
       final engQueries = [
         '$englishTitle $volumeNumber',
@@ -720,6 +727,32 @@ class ComicSearchService {
   /// Busca portada en Google Books SIN restricción de idioma.
   /// Útil para series que solo tienen portada en inglés en Google Books
   /// (ej: "Something is Killing the Children" no está en español).
+  /// Busca portada en Open Library
+  Future<String?> _searchOpenLibraryCover(String query) async {
+    try {
+      debugPrint('📚 Open Library: "$query"');
+      final url = Uri.parse(
+        'https://openlibrary.org/search.json?q=${Uri.encodeComponent(query)}&limit=5',
+      );
+      final response = await http.get(url).timeout(const Duration(seconds: 10));
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final docs = data['docs'] as List? ?? [];
+        for (final doc in docs) {
+          final coverId = doc['cover_i'];
+          if (coverId != null) {
+            final coverUrl = 'https://covers.openlibrary.org/b/id/$coverId-L.jpg';
+            debugPrint('📚 Open Library cover encontrada: $coverUrl');
+            return coverUrl;
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Open Library error: $e');
+    }
+    return null;
+  }
+
   Future<String?> _searchGoogleBooksInternational(String query) async {
     try {
       debugPrint('🌍 Google Books (sin langRestrict): "$query"');

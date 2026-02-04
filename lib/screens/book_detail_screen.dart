@@ -4,7 +4,6 @@ import 'package:provider/provider.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../models/book.dart';
 import '../services/book_provider.dart';
-import '../services/book_api_service.dart';
 import '../services/parent_settings_service.dart';
 import '../services/new_volume_checker_service.dart';
 import '../theme/comic_theme.dart';
@@ -25,7 +24,6 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
   late TextEditingController _pageController;
   late TextEditingController _totalPagesController;
   late Book _book;
-  bool _searchingCover = false;
   bool _isSeriesComplete = false;
 
   @override
@@ -136,20 +134,14 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
                           ),
                           child: ClipRRect(
                             borderRadius: BorderRadius.circular(8),
-                            child: _searchingCover
-                                ? const Center(
-                                    child: CircularProgressIndicator(
-                                      color: ComicTheme.primaryOrange,
-                                    ),
+                            child: _book.coverUrl != null && _book.coverUrl!.isNotEmpty
+                                ? CachedNetworkImage(
+                                    imageUrl: _book.coverUrl!,
+                                    fit: BoxFit.cover,
+                                    errorWidget: (context, url, error) =>
+                                        _buildPlaceholder(),
                                   )
-                                : _book.coverUrl != null && _book.coverUrl!.isNotEmpty
-                                    ? CachedNetworkImage(
-                                        imageUrl: _book.coverUrl!,
-                                        fit: BoxFit.cover,
-                                        errorWidget: (context, url, error) =>
-                                            _buildPlaceholder(),
-                                      )
-                                    : _buildPlaceholder(),
+                                : _buildPlaceholder(),
                           ),
                         ),
                         // Badge de serie
@@ -747,6 +739,13 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
 
   Future<void> _searchNewCover() async {
     // Mostrar opciones antes de buscar
+    // Construir query con volumen incluido
+    final seriesName = _book.seriesName ?? _book.title;
+    final volNum = _book.volumeNumber;
+    final searchQuery = volNum != null
+        ? '$seriesName ${volNum.toString().padLeft(2, '0')}'
+        : seriesName;
+
     final option = await showModalBottomSheet<String>(
       context: context,
       backgroundColor: ComicTheme.backgroundCream,
@@ -776,7 +775,7 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
               ),
             ),
             const SizedBox(height: 20),
-            // Opción 1: Buscar automáticamente
+            // Opción 1: Buscar portada (abre diálogo con resultados)
             ListTile(
               leading: Container(
                 padding: const EdgeInsets.all(10),
@@ -784,41 +783,20 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
                   color: ComicTheme.primaryOrange.withValues(alpha: 0.2),
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: const Icon(Icons.auto_fix_high, color: ComicTheme.primaryOrange),
+                child: const Icon(Icons.image_search, color: ComicTheme.primaryOrange),
               ),
               title: Text(
-                'Buscar automáticamente',
+                'Buscar portada',
                 style: GoogleFonts.comicNeue(fontWeight: FontWeight.bold, fontSize: 16),
               ),
               subtitle: Text(
-                'La app buscará la mejor portada',
+                'Busca en varias fuentes y elige la mejor',
                 style: GoogleFonts.comicNeue(fontSize: 12, color: Colors.grey[600]),
               ),
-              onTap: () => Navigator.pop(ctx, 'auto'),
+              onTap: () => Navigator.pop(ctx, 'search'),
             ),
             const SizedBox(height: 8),
-            // Opción 2: Buscar manualmente
-            ListTile(
-              leading: Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: ComicTheme.secondaryBlue.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Icon(Icons.search, color: ComicTheme.secondaryBlue),
-              ),
-              title: Text(
-                'Buscar manualmente',
-                style: GoogleFonts.comicNeue(fontWeight: FontWeight.bold, fontSize: 16),
-              ),
-              subtitle: Text(
-                'Escribe tu búsqueda y elige entre resultados',
-                style: GoogleFonts.comicNeue(fontSize: 12, color: Colors.grey[600]),
-              ),
-              onTap: () => Navigator.pop(ctx, 'manual'),
-            ),
-            const SizedBox(height: 8),
-            // Opción 3: Pegar URL
+            // Opción 2: Pegar URL
             ListTile(
               leading: Container(
                 padding: const EdgeInsets.all(10),
@@ -847,228 +825,32 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
     if (option == null || !mounted) return;
 
     if (option == 'paste') {
-      // Mostrar diálogo para pegar URL
       _showPasteUrlDialog();
       return;
     }
 
-    if (option == 'manual') {
-      // Abrir diálogo de búsqueda manual
-      final seriesName = _book.seriesName ?? _book.title;
-      final selectedCover = await showCoverSearchDialog(
-        context,
-        initialQuery: seriesName,
-        author: _book.author,
-        volumeNumber: _book.volumeNumber,
-        currentCoverUrl: _book.coverUrl,
+    // Buscar portada: abrir diálogo con query que incluye el volumen
+    final selectedCover = await showCoverSearchDialog(
+      context,
+      initialQuery: searchQuery,
+      author: _book.author,
+      volumeNumber: _book.volumeNumber,
+      currentCoverUrl: _book.coverUrl,
+      isbn: _book.isbn,
+    );
+
+    if (selectedCover != null && selectedCover.isNotEmpty && mounted) {
+      await context.read<BookProvider>().updateCoverUrl(_book.id!, selectedCover);
+      setState(() => _book = _book.copyWith(coverUrl: selectedCover));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '¡Portada actualizada!',
+            style: GoogleFonts.comicNeue(fontWeight: FontWeight.bold),
+          ),
+          backgroundColor: ComicTheme.powerGreen,
+        ),
       );
-
-      if (selectedCover != null && selectedCover.isNotEmpty && mounted) {
-        await context.read<BookProvider>().updateCoverUrl(_book.id!, selectedCover);
-        setState(() => _book = _book.copyWith(coverUrl: selectedCover));
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              '¡Portada actualizada!',
-              style: GoogleFonts.comicNeue(fontWeight: FontWeight.bold),
-            ),
-            backgroundColor: ComicTheme.powerGreen,
-          ),
-        );
-      }
-      return;
-    }
-
-    // Búsqueda automática (código existente)
-    setState(() => _searchingCover = true);
-
-    try {
-      final provider = context.read<BookProvider>();
-
-      // Para omnibus, extraer serie del título (ej: "ONE PIECE 3 EN 1 3" -> "ONE PIECE 3 EN 1")
-      String seriesName;
-      int? volumeNum = _book.volumeNumber;
-      String? baseSeriesName;
-
-      // Detectar omnibus en el TÍTULO (no en seriesName guardado)
-      final omnibusMatch = RegExp(r'^(.+\d+\s*[Ee][Nn]\s*1)\s+(\d+)$').firstMatch(_book.title.trim());
-      final isOmnibus = omnibusMatch != null;
-
-      if (isOmnibus) {
-        // Para omnibus: extraer serie completa incluyendo "3 EN 1"
-        seriesName = omnibusMatch.group(1)!.trim();
-        volumeNum = int.tryParse(omnibusMatch.group(2) ?? '') ?? _book.volumeNumber;
-        // Base es sin el "3 EN 1" (ej: "ONE PIECE")
-        final baseMatch = RegExp(r'^(.+?)\s*\d+\s*[Ee][Nn]\s*1').firstMatch(seriesName);
-        baseSeriesName = baseMatch?.group(1)?.trim();
-        debugPrint('📚 Omnibus detectado del título: serie="$seriesName", base="$baseSeriesName", vol=$volumeNum');
-      } else {
-        // No omnibus: usar seriesName guardado o título
-        seriesName = _book.seriesName ?? _book.title;
-      }
-
-      String? newCover;
-
-      // PRIMERO: Si tenemos ISBN real, probar Casa del Libro (portada exacta por ISBN)
-      final hasRealIsbn = _book.isbn.length >= 10 && !_book.isbn.contains('-vol-');
-      if (hasRealIsbn) {
-        debugPrint('Intentando Casa del Libro con ISBN: ${_book.isbn}');
-        final apiService = BookApiService();
-        newCover = await apiService.searchCoverByIsbn(_book.isbn);
-        if (newCover != null) {
-          debugPrint('Portada encontrada en Casa del Libro por ISBN');
-        }
-      }
-
-      // Si Casa del Libro no tiene, usar el provider con traducciones español -> inglés
-      if (newCover == null || newCover.isEmpty) {
-        newCover = await provider.searchCover(
-          seriesName,
-          _book.author,
-          volumeNumber: volumeNum,
-        );
-      }
-
-      // Fallback con queries adicionales
-      if (newCover == null || newCover.isEmpty) {
-        final apiService = BookApiService();
-        final queries = <String>[];
-        final authorFirst = _book.author.split(',').first.trim();
-
-        if (volumeNum != null) {
-          // Para OMNIBUS: queries específicas
-          if (isOmnibus) {
-            queries.addAll([
-              // Título exacto (ej: "ONE PIECE 3 EN 1 5")
-              _book.title,
-              // Con cero delante si < 10
-              if (volumeNum < 10) '$seriesName 0$volumeNum',
-              // Base + 3 en 1 + vol
-              if (baseSeriesName != null) '$baseSeriesName 3 en 1 $volumeNum',
-              if (baseSeriesName != null && volumeNum < 10) '$baseSeriesName 3 en 1 0$volumeNum',
-              // Solo base + volumen (puede encontrar versión no-omnibus)
-              if (baseSeriesName != null) '$baseSeriesName $volumeNum',
-              if (baseSeriesName != null) '$baseSeriesName vol $volumeNum',
-            ]);
-          }
-
-          // Queries estándar
-          queries.addAll([
-            '$authorFirst $seriesName vol $volumeNum',
-            '$authorFirst $seriesName $volumeNum',
-            '$seriesName vol $volumeNum',
-            '$seriesName $volumeNum',
-            '${_book.title} ${_book.author}',
-          ]);
-        } else {
-          queries.addAll([
-            '$authorFirst ${_book.title}',
-            '${_book.title} ${_book.author}',
-            _book.title,
-          ]);
-        }
-
-        for (final query in queries) {
-          debugPrint('🔍 Buscando portada: "$query"');
-          newCover = await apiService.searchCover(query, _book.author);
-          if (newCover != null && newCover.isNotEmpty) {
-            debugPrint('✅ Portada encontrada con query: $query');
-            break;
-          }
-        }
-      }
-
-      if (mounted) {
-        if (newCover != null && newCover.isNotEmpty) {
-          // Actualizar en la base de datos
-          await context.read<BookProvider>().updateCoverUrl(_book.id!, newCover);
-
-          setState(() {
-            _book = _book.copyWith(coverUrl: newCover);
-            _searchingCover = false;
-          });
-
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                '¡Portada actualizada!',
-                style: GoogleFonts.comicNeue(fontWeight: FontWeight.bold),
-              ),
-              backgroundColor: ComicTheme.powerGreen,
-            ),
-          );
-        } else {
-          setState(() => _searchingCover = false);
-          // Si no encuentra, ofrecer búsqueda manual
-          final shouldSearchManually = await showDialog<bool>(
-            context: context,
-            builder: (ctx) => AlertDialog(
-              backgroundColor: ComicTheme.backgroundCream,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-                side: const BorderSide(color: ComicTheme.comicBorder, width: 3),
-              ),
-              title: Text(
-                'NO ENCONTRADA',
-                style: GoogleFonts.bangers(color: ComicTheme.comicBorder),
-              ),
-              content: Text(
-                '¿Quieres buscar manualmente?',
-                style: GoogleFonts.comicNeue(fontWeight: FontWeight.bold),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx, false),
-                  child: Text('NO', style: GoogleFonts.bangers(color: Colors.grey)),
-                ),
-                ElevatedButton(
-                  onPressed: () => Navigator.pop(ctx, true),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: ComicTheme.secondaryBlue,
-                  ),
-                  child: Text('SÍ, BUSCAR', style: GoogleFonts.bangers(color: Colors.white)),
-                ),
-              ],
-            ),
-          );
-
-          if (shouldSearchManually == true && mounted) {
-            final selectedCover = await showCoverSearchDialog(
-              context,
-              initialQuery: _book.seriesName ?? _book.title,
-              author: _book.author,
-              volumeNumber: _book.volumeNumber,
-            );
-
-            if (selectedCover != null && selectedCover.isNotEmpty && mounted) {
-              await context.read<BookProvider>().updateCoverUrl(_book.id!, selectedCover);
-              setState(() => _book = _book.copyWith(coverUrl: selectedCover));
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(
-                    '¡Portada actualizada!',
-                    style: GoogleFonts.comicNeue(fontWeight: FontWeight.bold),
-                  ),
-                  backgroundColor: ComicTheme.powerGreen,
-                ),
-              );
-            }
-          }
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _searchingCover = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Error buscando portada',
-              style: GoogleFonts.comicNeue(fontWeight: FontWeight.bold),
-            ),
-            backgroundColor: ComicTheme.heroRed,
-          ),
-        );
-      }
     }
   }
 

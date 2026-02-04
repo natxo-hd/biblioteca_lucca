@@ -14,6 +14,7 @@ class CoverSearchDialog extends StatefulWidget {
   final String author;
   final int? volumeNumber;
   final String? currentCoverUrl;
+  final String? isbn;
 
   const CoverSearchDialog({
     super.key,
@@ -21,6 +22,7 @@ class CoverSearchDialog extends StatefulWidget {
     required this.author,
     this.volumeNumber,
     this.currentCoverUrl,
+    this.isbn,
   });
 
   @override
@@ -50,6 +52,14 @@ class _CoverSearchDialogState extends State<CoverSearchDialog> {
     super.dispose();
   }
 
+  /// Extrae el nombre de serie sin número de volumen del query
+  String _extractSeriesName(String query) {
+    // Quitar sufijos tipo "03", "vol 3", "vol. 3", "volume 3"
+    return query
+        .replaceAll(RegExp(r'\s+(?:vol\.?\s*)?\d+\s*$', caseSensitive: false), '')
+        .trim();
+  }
+
   Future<void> _performSearch() async {
     final query = _searchController.text.trim();
     if (query.isEmpty) return;
@@ -60,93 +70,290 @@ class _CoverSearchDialogState extends State<CoverSearchDialog> {
       _selectedCover = null;
     });
 
-    try {
-      final results = <String>{};
+    final results = <String>{};
+    final seriesName = _extractSeriesName(query);
 
-      // Obtener traducción al inglés si existe
-      final englishQuery = ComicTranslations.hasTranslation(query)
-          ? ComicTranslations.getEnglishName(query)
-          : null;
-      if (englishQuery != null) {
-        debugPrint('🔍 Traducción encontrada: "$query" → "$englishQuery"');
-      }
+    final englishName = ComicTranslations.hasTranslation(seriesName)
+        ? ComicTranslations.getEnglishName(seriesName)
+        : null;
+    if (englishName != null) {
+      debugPrint('🔍 Traducción: "$seriesName" → "$englishName"');
+    }
 
-      // 1. Si tenemos volumen, buscar portada específica en T&G
-      if (widget.volumeNumber != null) {
-        debugPrint('🔍 Buscando portada específica vol ${widget.volumeNumber}: $query');
-        final exactCover = await _tomosYGrapas.searchCover(query, widget.volumeNumber!);
-        if (exactCover != null && exactCover.isNotEmpty) {
-          results.add(exactCover);
-          if (mounted) {
-            setState(() => _coverResults = results.toList());
-          }
-        }
-      }
-
-      // 2. Buscar múltiples portadas en Tomos y Grapas
-      debugPrint('🔍 Buscando portadas en Tomos y Grapas: $query');
-      final tomosResults = await _tomosYGrapas.searchCoversMultiple(query, limit: 6);
-      results.addAll(tomosResults);
-
+    void addResults(List<String> covers) {
+      results.addAll(covers);
       if (mounted && results.isNotEmpty) {
         setState(() => _coverResults = results.toList());
       }
+    }
 
-      // 3. Buscar en Google Books con título en INGLÉS + volumen (más fiable)
-      if (englishQuery != null && widget.volumeNumber != null) {
-        final engVolQueries = [
-          '$englishQuery ${widget.volumeNumber}',
-          '$englishQuery vol ${widget.volumeNumber}',
-        ];
-        for (final engQ in engVolQueries) {
-          if (results.length >= 12) break;
-          final covers = await _searchGoogleBooksCovers(engQ);
-          results.addAll(covers);
+    // Casa del Libro directo por ISBN (rápido, hacer primero)
+    if (widget.isbn != null && widget.isbn!.startsWith('97884')) {
+      final cdlUrl = _buildCasaDelLibroCoverUrl(widget.isbn!);
+      try {
+        final imgResp = await http.head(Uri.parse(cdlUrl))
+            .timeout(const Duration(seconds: 3));
+        if (imgResp.statusCode == 200) {
+          addResults([cdlUrl]);
         }
-        if (mounted && results.isNotEmpty) {
-          setState(() => _coverResults = results.toList());
+      } catch (_) {}
+    }
+
+    // Lanzar TODAS las búsquedas en PARALELO
+    final searches = <Future<void>>[];
+
+    // Open Library (nombre inglés + volumen)
+    if (englishName != null && widget.volumeNumber != null) {
+      searches.add(() async {
+        try {
+          final covers = await _searchOpenLibraryCovers(
+            englishName, volumeNumber: widget.volumeNumber,
+          );
+          addResults(covers);
+        } catch (e) {
+          debugPrint('OpenLibrary EN error: $e');
+        }
+      }());
+    }
+
+    // Tomos y Grapas (volumen exacto)
+    if (widget.volumeNumber != null) {
+      searches.add(() async {
+        try {
+          final cover = await _tomosYGrapas.searchCover(
+            seriesName, widget.volumeNumber!,
+          );
+          if (cover != null && cover.isNotEmpty) addResults([cover]);
+        } catch (e) {
+          debugPrint('T&G exact error: $e');
+        }
+      }());
+    }
+
+    // Tomos y Grapas (múltiples)
+    searches.add(() async {
+      try {
+        final covers = await _tomosYGrapas.searchCoversMultiple(
+          seriesName, limit: 6,
+        );
+        addResults(covers);
+      } catch (e) {
+        debugPrint('T&G multi error: $e');
+      }
+    }());
+
+    // Open Library (query directo, sin traducción)
+    if (englishName == null) {
+      searches.add(() async {
+        try {
+          final covers = await _searchOpenLibraryCovers(
+            query, volumeNumber: widget.volumeNumber,
+          );
+          addResults(covers);
+        } catch (e) {
+          debugPrint('OpenLibrary ES error: $e');
+        }
+      }());
+    }
+
+    // Google Books (inglés)
+    if (englishName != null) {
+      final engQuery = widget.volumeNumber != null
+          ? '$englishName vol ${widget.volumeNumber}'
+          : englishName;
+      searches.add(() async {
+        try {
+          final covers = await _searchGoogleBooksCovers(engQuery);
+          addResults(covers);
+        } catch (e) {
+          debugPrint('GoogleBooks EN error: $e');
+        }
+      }());
+    }
+
+    // Amazon
+    final amazonQuery = widget.volumeNumber != null
+        ? '$seriesName ${widget.volumeNumber} comic'
+        : '$seriesName comic';
+    searches.add(() async {
+      try {
+        final covers = await _searchAmazonCovers(amazonQuery);
+        addResults(covers);
+      } catch (e) {
+        debugPrint('Amazon error: $e');
+      }
+    }());
+
+    // Google Books (español)
+    searches.add(() async {
+      try {
+        final cover = await _apiService.searchCover(query, widget.author);
+        if (cover != null && cover.isNotEmpty) addResults([cover]);
+      } catch (e) {
+        debugPrint('GoogleBooks ES error: $e');
+      }
+    }());
+
+    // Esperar a que terminen todas las búsquedas paralelas
+    await Future.wait(searches);
+
+    if (mounted) {
+      setState(() {
+        _coverResults = results.toList();
+        _isSearching = false;
+      });
+    }
+  }
+
+  /// Verifica que un título de Open Library sea relevante para la búsqueda
+  bool _isTitleRelevant(String resultTitle, String searchQuery) {
+    final resultLower = resultTitle.toLowerCase();
+    final queryLower = searchQuery.toLowerCase();
+    // Al menos las 2 primeras palabras significativas deben coincidir
+    final queryWords = queryLower.split(RegExp(r'\s+')).where((w) => w.length > 2).toList();
+    if (queryWords.isEmpty) return true;
+    final matchCount = queryWords.where((w) => resultLower.contains(w)).length;
+    return matchCount >= (queryWords.length * 0.5).ceil();
+  }
+
+  /// Busca portadas en Open Library (excelente fuente para cómics)
+  Future<List<String>> _searchOpenLibraryCovers(String query, {int? volumeNumber}) async {
+    final covers = <String>[];
+    try {
+      // Búsqueda con volumen específico primero
+      final searchQuery = volumeNumber != null ? '$query vol $volumeNumber' : query;
+      debugPrint('🔍 Open Library: "$searchQuery"');
+      final url = Uri.parse(
+        'https://openlibrary.org/search.json?q=${Uri.encodeComponent(searchQuery)}&limit=10',
+      );
+      final response = await http.get(url).timeout(const Duration(seconds: 10));
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final docs = data['docs'] as List? ?? [];
+        for (final doc in docs) {
+          final title = (doc['title'] as String?) ?? '';
+          // Filtrar resultados irrelevantes
+          if (!_isTitleRelevant(title, query)) {
+            debugPrint('📚 Open Library DESCARTADO (no relevante): $title');
+            continue;
+          }
+          final coverId = doc['cover_i'];
+          if (coverId != null) {
+            final coverUrl = 'https://covers.openlibrary.org/b/id/$coverId-L.jpg';
+            if (!covers.contains(coverUrl)) {
+              covers.add(coverUrl);
+              debugPrint('📚 Open Library cover: $title → $coverUrl');
+            }
+          }
+          if (covers.length >= 6) break;
         }
       }
 
-      // 4. Buscar en Google Books con título español
-      debugPrint('🔍 Buscando portadas en Google Books: $query');
-      final googleCover = await _apiService.searchCover(query, widget.author);
-      if (googleCover != null && googleCover.isNotEmpty) {
-        results.add(googleCover);
-      }
-
-      // 5. Buscar con variaciones de volumen
-      if (widget.volumeNumber != null) {
-        final volNum = widget.volumeNumber!;
-        final variations = [
-          '$query vol $volNum',
-          '$query $volNum',
-          if (volNum < 10) '$query 0$volNum',
-          // También con nombre inglés
-          if (englishQuery != null) '$englishQuery $volNum',
-        ];
-
-        for (final variation in variations) {
-          if (results.length >= 12) break;
-          final cover = await _apiService.searchCover(variation, widget.author);
-          if (cover != null && cover.isNotEmpty && !results.contains(cover)) {
-            results.add(cover);
+      // Si no encontramos suficientes con volumen, buscar sin volumen
+      if (covers.length < 3 && volumeNumber != null) {
+        debugPrint('🔍 Open Library (sin vol): "$query"');
+        final url2 = Uri.parse(
+          'https://openlibrary.org/search.json?q=${Uri.encodeComponent(query)}&limit=15',
+        );
+        final response2 = await http.get(url2).timeout(const Duration(seconds: 10));
+        if (response2.statusCode == 200) {
+          final data2 = json.decode(response2.body);
+          final docs2 = data2['docs'] as List? ?? [];
+          for (final doc in docs2) {
+            final title = (doc['title'] as String?) ?? '';
+            if (!_isTitleRelevant(title, query)) continue;
+            final coverId = doc['cover_i'];
+            if (coverId != null) {
+              final coverUrl = 'https://covers.openlibrary.org/b/id/$coverId-L.jpg';
+              if (!covers.contains(coverUrl)) {
+                covers.add(coverUrl);
+                debugPrint('📚 Open Library cover: $title → $coverUrl');
+              }
+            }
+            if (covers.length >= 8) break;
           }
         }
       }
+    } catch (e) {
+      debugPrint('Open Library covers error: $e');
+    }
+    return covers;
+  }
 
-      if (mounted) {
-        setState(() {
-          _coverResults = results.toList();
-          _isSearching = false;
-        });
+  /// Construye URL de portada de Casa del Libro a partir de ISBN
+  String _buildCasaDelLibroCoverUrl(String isbn) {
+    final last2 = isbn.length >= 2 ? isbn.substring(isbn.length - 2) : '00';
+    return 'https://imagessl0.casadellibro.com/a/l/s7/$last2/$isbn.webp';
+  }
+
+  /// Calcula dígito de control ISBN-13
+  String? _asinToIsbn13(String asin) {
+    if (asin.length != 10 || !RegExp(r'^\d{9}[\dX]$').hasMatch(asin)) return null;
+    final isbn12 = '978${asin.substring(0, 9)}';
+    var total = 0;
+    for (var i = 0; i < 12; i++) {
+      total += int.parse(isbn12[i]) * (i.isEven ? 1 : 3);
+    }
+    final check = (10 - (total % 10)) % 10;
+    return '$isbn12$check';
+  }
+
+  /// Busca portadas en Amazon España + extrae ISBNs para Casa del Libro
+  Future<List<String>> _searchAmazonCovers(String query) async {
+    final covers = <String>[];
+    try {
+      debugPrint('🔍 Amazon ES: "$query"');
+      final url = Uri.parse(
+        'https://www.amazon.es/s?k=${Uri.encodeComponent(query)}&i=stripbooks',
+      );
+      final response = await http.get(url, headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+        'Accept': 'text/html',
+      }).timeout(const Duration(seconds: 10));
+      if (response.statusCode == 200) {
+        final body = response.body;
+
+        // 1. Extraer ASINs → convertir a ISBN-13 → portada de Casa del Libro
+        final asinPattern = RegExp(r'/dp/(\d{10})/');
+        final asinMatches = asinPattern.allMatches(body);
+        for (final match in asinMatches) {
+          final asin = match.group(1)!;
+          final isbn13 = _asinToIsbn13(asin);
+          if (isbn13 != null && isbn13.startsWith('97884')) {
+            final cdlUrl = _buildCasaDelLibroCoverUrl(isbn13);
+            if (!covers.contains(cdlUrl)) {
+              // Verificar que la imagen existe
+              try {
+                final imgResp = await http.head(Uri.parse(cdlUrl))
+                    .timeout(const Duration(seconds: 5));
+                if (imgResp.statusCode == 200) {
+                  covers.add(cdlUrl);
+                  debugPrint('🏠 Amazon ASIN $asin → CDL ISBN $isbn13 → $cdlUrl');
+                }
+              } catch (_) {}
+            }
+          }
+          if (covers.length >= 3) break;
+        }
+
+        // 2. Extraer imágenes de productos Amazon directamente
+        final imgPattern = RegExp(r'"(https://m\.media-amazon\.com/images/I/[^"]+\.jpg)"');
+        final imgMatches = imgPattern.allMatches(body);
+        for (final match in imgMatches) {
+          var imgUrl = match.group(1)!;
+          imgUrl = imgUrl.replaceAll(RegExp(r'\._[^.]+_\.'), '.');
+          if (imgUrl.contains('_CB') || imgUrl.contains('gateway')) continue;
+          if (!covers.contains(imgUrl)) {
+            covers.add(imgUrl);
+            debugPrint('🛒 Amazon cover: $imgUrl');
+          }
+          if (covers.length >= 6) break;
+        }
       }
     } catch (e) {
-      debugPrint('Error buscando portadas: $e');
-      if (mounted) {
-        setState(() => _isSearching = false);
-      }
+      debugPrint('Amazon covers error: $e');
     }
+    return covers;
   }
 
   /// Busca portadas directamente en Google Books (sin restricción de idioma)
@@ -474,6 +681,7 @@ Future<String?> showCoverSearchDialog(
   required String author,
   int? volumeNumber,
   String? currentCoverUrl,
+  String? isbn,
 }) {
   return showDialog<String>(
     context: context,
@@ -482,6 +690,7 @@ Future<String?> showCoverSearchDialog(
       author: author,
       volumeNumber: volumeNumber,
       currentCoverUrl: currentCoverUrl,
+      isbn: isbn,
     ),
   );
 }
