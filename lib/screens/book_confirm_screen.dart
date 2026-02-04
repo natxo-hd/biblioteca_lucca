@@ -1,10 +1,12 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:http/http.dart' as http;
 import '../models/book.dart';
 import '../theme/comic_theme.dart';
-import '../services/book_api_service.dart';
+import '../services/api/tomosygrapas_client.dart';
 import '../widgets/cover_search_dialog.dart';
 
 class BookConfirmScreen extends StatefulWidget {
@@ -590,49 +592,95 @@ class _BookConfirmScreenState extends State<BookConfirmScreen> {
     return null;
   }
 
+  /// Construye URL de portada de Casa del Libro a partir de ISBN
+  String _buildCdlCoverUrl(String isbn) {
+    final last2 = isbn.substring(isbn.length - 2);
+    return 'https://imagessl0.casadellibro.com/a/l/s7/$last2/$isbn.webp';
+  }
+
   /// Búsqueda automática en background (se lanza al abrir si no hay portada)
-  /// Ejecuta múltiples fuentes en PARALELO y usa la primera que encuentre.
+  /// Solo hace requests ligeros: HEAD a CDL, GET a Google Books, GET a T&G.
   Future<void> _autoSearchCover() async {
     if (!mounted) return;
     setState(() => _searchingCover = true);
 
     try {
-      final apiService = BookApiService();
       final title = _titleController.text.trim();
-      final author = _authorController.text.trim();
       final volume = _volumeController.text.trim();
       final isbn = widget.detectedBook.isbn;
       String? foundCover;
 
-      // Lanzar todas las búsquedas en paralelo
       final searches = <Future<String?>>[];
 
-      // 1. Casa del Libro por ISBN (rápido y fiable para ISBN español)
-      if (isbn.isNotEmpty) {
+      // 1. CDL directo por ISBN (1 HEAD request, ~1s)
+      if (isbn.isNotEmpty && isbn.startsWith('97884')) {
         searches.add(() async {
           try {
-            return await apiService.searchCoverByIsbn(isbn);
-          } catch (_) { return null; }
+            final cdlUrl = _buildCdlCoverUrl(isbn);
+            final resp = await http.head(Uri.parse(cdlUrl))
+                .timeout(const Duration(seconds: 4));
+            if (resp.statusCode == 200) return cdlUrl;
+          } catch (_) {}
+          return null;
         }());
       }
 
-      // 2. Título + volumen
-      if (volume.isNotEmpty) {
-        searches.add(() async {
-          try {
-            return await apiService.searchCover('$title Vol $volume', author);
-          } catch (_) { return null; }
-        }());
-      }
-
-      // 3. Solo título
+      // 2. Google Books → ISBN español → CDL (~3s)
+      final gbQuery = volume.isNotEmpty ? '$title $volume' : title;
       searches.add(() async {
         try {
-          return await apiService.searchCover(title, author);
-        } catch (_) { return null; }
+          final url = Uri.parse(
+            'https://www.googleapis.com/books/v1/volumes'
+            '?q=${Uri.encodeComponent(gbQuery)}&maxResults=5',
+          );
+          final resp = await http.get(url).timeout(const Duration(seconds: 6));
+          if (resp.statusCode == 200) {
+            final data = json.decode(resp.body);
+            final items = data['items'] as List? ?? [];
+            for (final item in items) {
+              final vi = item['volumeInfo'] as Map<String, dynamic>?;
+              if (vi == null) continue;
+              final ids = vi['industryIdentifiers'] as List? ?? [];
+              for (final id in ids) {
+                final bookIsbn = id['identifier'] as String?;
+                if (bookIsbn != null && bookIsbn.startsWith('97884')) {
+                  final cdlUrl = _buildCdlCoverUrl(bookIsbn);
+                  final headResp = await http.head(Uri.parse(cdlUrl))
+                      .timeout(const Duration(seconds: 3));
+                  if (headResp.statusCode == 200) return cdlUrl;
+                }
+              }
+            }
+            // Fallback: thumbnail de Google Books
+            for (final item in items) {
+              final vi = item['volumeInfo'] as Map<String, dynamic>?;
+              final img = vi?['imageLinks'] as Map<String, dynamic>?;
+              var thumb = img?['thumbnail'] as String?;
+              if (thumb != null) {
+                return thumb.replaceAll('http://', 'https://').replaceAll('zoom=1', 'zoom=3');
+              }
+            }
+          }
+        } catch (_) {}
+        return null;
       }());
 
-      // Esperar a todas y usar la primera que devuelva resultado
+      // 3. Tomos y Grapas (1 AJAX request, ~3s)
+      final seriesName = _seriesController.text.trim().isNotEmpty
+          ? _seriesController.text.trim()
+          : title;
+      final volNum = int.tryParse(volume);
+      if (volNum != null) {
+        searches.add(() async {
+          try {
+            final tomosYGrapas = TomosYGrapasClient();
+            return await tomosYGrapas.searchCover(seriesName, volNum);
+          } catch (_) {}
+          return null;
+        }());
+      }
+
+      // Esperar a todas en paralelo, usar la primera que encuentre
       final results = await Future.wait(searches);
       for (final result in results) {
         if (result != null && result.isNotEmpty) {
