@@ -6,6 +6,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../models/book.dart';
 import '../services/book_provider.dart';
 import '../theme/comic_theme.dart';
+import '../utils/volume_extractor.dart';
 import '../widgets/previous_volumes_dialog.dart';
 import 'book_confirm_screen.dart';
 import 'title_search_screen.dart';
@@ -239,7 +240,15 @@ class _ScannerScreenState extends State<ScannerScreen>
     if (!mounted) return;
 
     if (success) {
-      final volumeNumber = bookToAdd.volumeNumber;
+      // Usar volumeNumber del libro, o intentar extraerlo del título como fallback
+      int? volumeNumber = bookToAdd.volumeNumber;
+      if (volumeNumber == null) {
+        final volInfo = VolumeExtractor.extractFromTitle(bookToAdd.title);
+        volumeNumber = volInfo.volumeNumber;
+        if (volumeNumber != null) {
+          debugPrint('📋 Volumen extraído del título "${bookToAdd.title}": $volumeNumber');
+        }
+      }
       if (volumeNumber != null && volumeNumber > 1) {
         // Consultar qué volúmenes ya existen en la biblioteca
         final seriesName = bookToAdd.seriesName ?? bookToAdd.title;

@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import '../models/book.dart';
 import '../theme/comic_theme.dart';
 import '../services/api/tomosygrapas_client.dart';
+import '../utils/volume_extractor.dart';
 import '../widgets/cover_search_dialog.dart';
 
 class BookConfirmScreen extends StatefulWidget {
@@ -41,12 +42,25 @@ class _BookConfirmScreenState extends State<BookConfirmScreen> {
 
     _titleController = TextEditingController(text: widget.detectedBook.title);
     _authorController = TextEditingController(text: widget.detectedBook.author);
-    // Serie: usar la detectada o el título como fallback
+
+    // Auto-detectar serie y volumen del título si la API no los devolvió
+    String? seriesName = widget.detectedBook.seriesName;
+    int? volumeNumber = widget.detectedBook.volumeNumber;
+
+    if (volumeNumber == null) {
+      final volInfo = VolumeExtractor.extractFromTitle(widget.detectedBook.title);
+      if (volInfo.volumeNumber != null) {
+        volumeNumber = volInfo.volumeNumber;
+        seriesName ??= volInfo.seriesName;
+        debugPrint('  Auto-detectado del título: serie="${volInfo.seriesName}" vol=$volumeNumber');
+      }
+    }
+
     _seriesController = TextEditingController(
-      text: widget.detectedBook.seriesName ?? widget.detectedBook.title,
+      text: seriesName ?? widget.detectedBook.title,
     );
     _volumeController = TextEditingController(
-      text: widget.detectedBook.volumeNumber?.toString() ?? '',
+      text: volumeNumber?.toString() ?? '',
     );
     _pagesController = TextEditingController(
       text: widget.detectedBook.totalPages > 0
