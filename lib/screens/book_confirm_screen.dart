@@ -591,6 +591,7 @@ class _BookConfirmScreenState extends State<BookConfirmScreen> {
   }
 
   /// Búsqueda automática en background (se lanza al abrir si no hay portada)
+  /// Ejecuta múltiples fuentes en PARALELO y usa la primera que encuentre.
   Future<void> _autoSearchCover() async {
     if (!mounted) return;
     setState(() => _searchingCover = true);
@@ -601,29 +602,48 @@ class _BookConfirmScreenState extends State<BookConfirmScreen> {
       final author = _authorController.text.trim();
       final volume = _volumeController.text.trim();
       final isbn = widget.detectedBook.isbn;
+      String? foundCover;
 
-      String? newCover;
+      // Lanzar todas las búsquedas en paralelo
+      final searches = <Future<String?>>[];
 
-      // 1. Por ISBN en Casa del Libro
+      // 1. Casa del Libro por ISBN (rápido y fiable para ISBN español)
       if (isbn.isNotEmpty) {
-        newCover = await apiService.searchCoverByIsbn(isbn);
+        searches.add(() async {
+          try {
+            return await apiService.searchCoverByIsbn(isbn);
+          } catch (_) { return null; }
+        }());
       }
 
-      // 2. Con título + volumen
-      if ((newCover == null || newCover.isEmpty) && volume.isNotEmpty) {
-        newCover = await apiService.searchCover('$title Vol $volume', author);
+      // 2. Título + volumen
+      if (volume.isNotEmpty) {
+        searches.add(() async {
+          try {
+            return await apiService.searchCover('$title Vol $volume', author);
+          } catch (_) { return null; }
+        }());
       }
 
       // 3. Solo título
-      if (newCover == null || newCover.isEmpty) {
-        newCover = await apiService.searchCover(title, author);
+      searches.add(() async {
+        try {
+          return await apiService.searchCover(title, author);
+        } catch (_) { return null; }
+      }());
+
+      // Esperar a todas y usar la primera que devuelva resultado
+      final results = await Future.wait(searches);
+      for (final result in results) {
+        if (result != null && result.isNotEmpty) {
+          foundCover = result;
+          break;
+        }
       }
 
       if (mounted) {
         setState(() {
-          if (newCover != null && newCover.isNotEmpty) {
-            _coverUrl = newCover;
-          }
+          if (foundCover != null) _coverUrl = foundCover;
           _searchingCover = false;
         });
       }

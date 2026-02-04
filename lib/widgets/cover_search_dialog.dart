@@ -60,6 +60,12 @@ class _CoverSearchDialogState extends State<CoverSearchDialog> {
         .trim();
   }
 
+  /// Detecta si una URL es de fuente española (Casa del Libro, Tomos y Grapas)
+  bool _isSpanishSource(String url) {
+    return url.contains('casadellibro.com') ||
+        url.contains('tomosygrapas.com');
+  }
+
   Future<void> _performSearch() async {
     final query = _searchController.text.trim();
     if (query.isEmpty) return;
@@ -70,7 +76,10 @@ class _CoverSearchDialogState extends State<CoverSearchDialog> {
       _selectedCover = null;
     });
 
-    final results = <String>{};
+    // Dos grupos: español (prioridad) e internacional
+    final spanishCovers = <String>[];
+    final internationalCovers = <String>[];
+    final seen = <String>{};
     final seriesName = _extractSeriesName(query);
 
     final englishName = ComicTranslations.hasTranslation(seriesName)
@@ -80,10 +89,20 @@ class _CoverSearchDialogState extends State<CoverSearchDialog> {
       debugPrint('🔍 Traducción: "$seriesName" → "$englishName"');
     }
 
-    void addResults(List<String> covers) {
-      results.addAll(covers);
-      if (mounted && results.isNotEmpty) {
-        setState(() => _coverResults = results.toList());
+    void addCovers(List<String> covers) {
+      for (final cover in covers) {
+        if (seen.contains(cover)) continue;
+        seen.add(cover);
+        if (_isSpanishSource(cover)) {
+          spanishCovers.add(cover);
+        } else {
+          internationalCovers.add(cover);
+        }
+      }
+      if (mounted && seen.isNotEmpty) {
+        setState(() {
+          _coverResults = [...spanishCovers, ...internationalCovers];
+        });
       }
     }
 
@@ -94,13 +113,52 @@ class _CoverSearchDialogState extends State<CoverSearchDialog> {
         final imgResp = await http.head(Uri.parse(cdlUrl))
             .timeout(const Duration(seconds: 3));
         if (imgResp.statusCode == 200) {
-          addResults([cdlUrl]);
+          addCovers([cdlUrl]);
         }
       } catch (_) {}
     }
 
     // Lanzar TODAS las búsquedas en PARALELO
     final searches = <Future<void>>[];
+
+    // Tomos y Grapas (volumen exacto) - fuente española prioritaria
+    if (widget.volumeNumber != null) {
+      searches.add(() async {
+        try {
+          final cover = await _tomosYGrapas.searchCover(
+            seriesName, widget.volumeNumber!,
+          );
+          if (cover != null && cover.isNotEmpty) addCovers([cover]);
+        } catch (e) {
+          debugPrint('T&G exact error: $e');
+        }
+      }());
+    }
+
+    // Tomos y Grapas (múltiples) - fuente española prioritaria
+    searches.add(() async {
+      try {
+        final covers = await _tomosYGrapas.searchCoversMultiple(
+          seriesName, limit: 6,
+        );
+        addCovers(covers);
+      } catch (e) {
+        debugPrint('T&G multi error: $e');
+      }
+    }());
+
+    // Amazon (extrae ASINs→ISBN→Casa del Libro = portadas españolas)
+    final amazonQuery = widget.volumeNumber != null
+        ? '$seriesName ${widget.volumeNumber} comic'
+        : '$seriesName comic';
+    searches.add(() async {
+      try {
+        final covers = await _searchAmazonCovers(amazonQuery);
+        addCovers(covers);
+      } catch (e) {
+        debugPrint('Amazon error: $e');
+      }
+    }());
 
     // Open Library (nombre inglés + volumen)
     if (englishName != null && widget.volumeNumber != null) {
@@ -109,38 +167,12 @@ class _CoverSearchDialogState extends State<CoverSearchDialog> {
           final covers = await _searchOpenLibraryCovers(
             englishName, volumeNumber: widget.volumeNumber,
           );
-          addResults(covers);
+          addCovers(covers);
         } catch (e) {
           debugPrint('OpenLibrary EN error: $e');
         }
       }());
     }
-
-    // Tomos y Grapas (volumen exacto)
-    if (widget.volumeNumber != null) {
-      searches.add(() async {
-        try {
-          final cover = await _tomosYGrapas.searchCover(
-            seriesName, widget.volumeNumber!,
-          );
-          if (cover != null && cover.isNotEmpty) addResults([cover]);
-        } catch (e) {
-          debugPrint('T&G exact error: $e');
-        }
-      }());
-    }
-
-    // Tomos y Grapas (múltiples)
-    searches.add(() async {
-      try {
-        final covers = await _tomosYGrapas.searchCoversMultiple(
-          seriesName, limit: 6,
-        );
-        addResults(covers);
-      } catch (e) {
-        debugPrint('T&G multi error: $e');
-      }
-    }());
 
     // Open Library (query directo, sin traducción)
     if (englishName == null) {
@@ -149,7 +181,7 @@ class _CoverSearchDialogState extends State<CoverSearchDialog> {
           final covers = await _searchOpenLibraryCovers(
             query, volumeNumber: widget.volumeNumber,
           );
-          addResults(covers);
+          addCovers(covers);
         } catch (e) {
           debugPrint('OpenLibrary ES error: $e');
         }
@@ -164,31 +196,18 @@ class _CoverSearchDialogState extends State<CoverSearchDialog> {
       searches.add(() async {
         try {
           final covers = await _searchGoogleBooksCovers(engQuery);
-          addResults(covers);
+          addCovers(covers);
         } catch (e) {
           debugPrint('GoogleBooks EN error: $e');
         }
       }());
     }
 
-    // Amazon
-    final amazonQuery = widget.volumeNumber != null
-        ? '$seriesName ${widget.volumeNumber} comic'
-        : '$seriesName comic';
-    searches.add(() async {
-      try {
-        final covers = await _searchAmazonCovers(amazonQuery);
-        addResults(covers);
-      } catch (e) {
-        debugPrint('Amazon error: $e');
-      }
-    }());
-
-    // Google Books (español)
+    // Google Books (español via BookApiService)
     searches.add(() async {
       try {
         final cover = await _apiService.searchCover(query, widget.author);
-        if (cover != null && cover.isNotEmpty) addResults([cover]);
+        if (cover != null && cover.isNotEmpty) addCovers([cover]);
       } catch (e) {
         debugPrint('GoogleBooks ES error: $e');
       }
@@ -199,7 +218,7 @@ class _CoverSearchDialogState extends State<CoverSearchDialog> {
 
     if (mounted) {
       setState(() {
-        _coverResults = results.toList();
+        _coverResults = [...spanishCovers, ...internationalCovers];
         _isSearching = false;
       });
     }
