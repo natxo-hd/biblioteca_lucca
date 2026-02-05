@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
+import '../constants/translations.dart';
 import '../models/book.dart';
 
 class DatabaseService {
@@ -239,11 +240,9 @@ class DatabaseService {
   }
 
   /// Busca un libro por serie y número de volumen (normalizado)
+  /// Usa traducciones español↔inglés para detectar la misma serie con nombre diferente
   Future<Book?> getBookBySeriesAndVolume(String seriesName, int volumeNumber) async {
     final db = await database;
-
-    // Normalizar el nombre de serie para comparación
-    final normalizedSeries = _normalizeSeriesName(seriesName);
 
     // Buscar todos los libros con ese volumen
     final List<Map<String, dynamic>> maps = await db.query(
@@ -252,15 +251,15 @@ class DatabaseService {
       whereArgs: [volumeNumber],
     );
 
-    // Comparar series normalizadas
+    // Comparar series usando matching robusto (traducciones + normalización)
     for (final map in maps) {
       final bookSeries = map['seriesName'] as String?;
-      if (bookSeries != null && _normalizeSeriesName(bookSeries) == normalizedSeries) {
+      if (bookSeries != null && _seriesMatch(bookSeries, seriesName)) {
         return Book.fromMap(map);
       }
       // También verificar el título por si no tiene seriesName
       final title = map['title'] as String;
-      if (_normalizeSeriesName(title).contains(normalizedSeries)) {
+      if (_seriesMatch(title, seriesName)) {
         return Book.fromMap(map);
       }
     }
@@ -289,13 +288,10 @@ class DatabaseService {
       final volNum = map['volumeNumber'] as int;
       final isbn = map['isbn'] as String?;
 
-      final normalizedBookSeries = bookSeries != null ? _normalizeSeriesName(bookSeries) : null;
-      final normalizedTitle = _normalizeSeriesName(title);
-
-      if (normalizedBookSeries != null && normalizedBookSeries == normalizedSeries) {
+      if (bookSeries != null && _seriesMatch(bookSeries, seriesName)) {
         existing.add(volNum);
         debugPrint('  ✅ Vol.$volNum encontrado (por serie): "$bookSeries" isbn=$isbn');
-      } else if (normalizedTitle == normalizedSeries) {
+      } else if (_seriesMatch(title, seriesName)) {
         existing.add(volNum);
         debugPrint('  ✅ Vol.$volNum encontrado (por título): "$title" isbn=$isbn');
       }
@@ -316,6 +312,41 @@ class DatabaseService {
         .replaceAll(RegExp(r'[^\w\s]'), '') // Quitar puntuación
         .replaceAll(RegExp(r'\s+'), ' ') // Normalizar espacios
         .trim();
+  }
+
+  /// Comprueba si dos nombres de serie se refieren a la misma serie,
+  /// considerando traducciones español↔inglés y contenimiento
+  bool _seriesMatch(String a, String b) {
+    final normA = _normalizeSeriesName(a);
+    final normB = _normalizeSeriesName(b);
+
+    // Match exacto
+    if (normA == normB) return true;
+    if (normA.isEmpty || normB.isEmpty) return false;
+
+    // Contenimiento (para variantes con subtítulos)
+    if (normA.length > 5 && normB.length > 5) {
+      if (normA.contains(normB) || normB.contains(normA)) return true;
+    }
+
+    // Traducciones español↔inglés
+    final englishA = ComicTranslations.getEnglishName(a);
+    if (_normalizeSeriesName(englishA) == normB) return true;
+
+    final englishB = ComicTranslations.getEnglishName(b);
+    if (_normalizeSeriesName(englishB) == normA) return true;
+
+    // También comparar traducciones entre sí
+    if (_normalizeSeriesName(englishA) == _normalizeSeriesName(englishB) &&
+        englishA.toLowerCase() != a.toLowerCase()) return true;
+
+    final spanishA = ComicTranslations.getSpanishName(a);
+    if (spanishA != null && _normalizeSeriesName(spanishA) == normB) return true;
+
+    final spanishB = ComicTranslations.getSpanishName(b);
+    if (spanishB != null && _normalizeSeriesName(spanishB) == normA) return true;
+
+    return false;
   }
 
   /// Encuentra duplicados lógicos (mismo contenido, diferente registro)
