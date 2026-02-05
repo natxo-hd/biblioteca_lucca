@@ -452,8 +452,8 @@ class _HomeScreenState extends State<HomeScreen>
               color: Colors.transparent,
               child: InkWell(
                 borderRadius: BorderRadius.circular(19),
-                onTap: () {
-                  Navigator.push(
+                onTap: () async {
+                  final result = await Navigator.push<String>(
                     context,
                     PageRouteBuilder(
                       pageBuilder: (context, animation, secondaryAnimation) =>
@@ -475,6 +475,13 @@ class _HomeScreenState extends State<HomeScreen>
                       },
                     ),
                   );
+                  // Navegar al tab correcto según el status del libro añadido
+                  if (result != null && mounted) {
+                    final targetIndex = result == 'reading' ? 0 : result == 'finished' ? 1 : _currentIndex;
+                    if (targetIndex != _currentIndex) {
+                      setState(() => _currentIndex = targetIndex);
+                    }
+                  }
                 },
                 child: Padding(
                   padding: const EdgeInsets.symmetric(

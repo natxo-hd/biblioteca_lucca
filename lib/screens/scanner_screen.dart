@@ -305,7 +305,7 @@ class _ScannerScreenState extends State<ScannerScreen>
       }
 
       if (mounted) {
-        Navigator.pop(context);
+        Navigator.pop(context, status);
       }
     } else {
       ScaffoldMessenger.of(context).showSnackBar(

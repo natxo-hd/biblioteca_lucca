@@ -781,7 +781,25 @@ class BookProvider extends ChangeNotifier {
   /// 3. Los volúmenes sin ISBN en T&G se crean con ISBN sintético y se buscan portadas después
   Future<int> addPreviousVolumesAsFinished(Book baseBook, List<int> volumeNumbers) async {
     int addedCount = 0;
-    final seriesName = baseBook.seriesName ?? baseBook.title;
+    var seriesName = baseBook.seriesName ?? baseBook.title;
+
+    // Buscar si ya hay volúmenes existentes de esta serie para usar su seriesName
+    // (evita crear colecciones duplicadas con nombre en otro idioma)
+    final existingVolumes = await _dbService.getExistingVolumeNumbers(seriesName);
+    if (existingVolumes.isNotEmpty) {
+      // Buscar el primer volumen existente para obtener su seriesName real
+      for (final existingVol in existingVolumes) {
+        final existingBook = await _dbService.getBookBySeriesAndVolume(seriesName, existingVol);
+        if (existingBook != null && existingBook.seriesName != null) {
+          final existingSeriesName = existingBook.seriesName!;
+          if (existingSeriesName != seriesName) {
+            debugPrint('📛 Usando seriesName existente: "$existingSeriesName" (en vez de "$seriesName")');
+            seriesName = existingSeriesName;
+          }
+          break;
+        }
+      }
+    }
 
     // Detectar si es edición omnibus (ej: "ONE PIECE 3 EN 1")
     final isOmnibus = RegExp(r'\d+\s*[Ee][Nn]\s*1', caseSensitive: false).hasMatch(seriesName);
@@ -797,8 +815,13 @@ class BookProvider extends ChangeNotifier {
     // PASO 1: Buscar ISBNs reales en Tomos y Grapas
     debugPrint('🔍 Buscando ISBNs reales en Tomos y Grapas...');
     Map<int, Map<String, String>> seriesVolumes = {};
+    // Intentar buscar con el nombre de serie (probar también traducción)
     try {
       seriesVolumes = await _tomosYGrapasClient.searchSeriesVolumes(seriesName);
+      // Si no encuentra nada, intentar con el nombre original del baseBook
+      if (seriesVolumes.isEmpty && seriesName != (baseBook.seriesName ?? baseBook.title)) {
+        seriesVolumes = await _tomosYGrapasClient.searchSeriesVolumes(baseBook.seriesName ?? baseBook.title);
+      }
       debugPrint('📚 ISBNs encontrados para ${seriesVolumes.length} volúmenes');
     } catch (e) {
       debugPrint('⚠️ Error buscando en T&G, usando ISBNs sintéticos: $e');
