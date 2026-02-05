@@ -106,10 +106,9 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
               ),
               child: Column(
                 children: [
-                  // Portada estilo cómic (tap para ver, long press para cambiar)
+                  // Portada estilo cómic (tap para ver fullscreen)
                   GestureDetector(
                     onTap: _openFullscreenCover,
-                    onLongPress: _searchNewCover,
                     child: Stack(
                       children: [
                         // Sombra
@@ -177,20 +176,23 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
                               ),
                             ),
                           ),
-                        // Icono de zoom
+                        // Botón cambiar portada
                         Positioned(
                           bottom: 4,
                           right: 4,
-                          child: Container(
-                            padding: const EdgeInsets.all(6),
-                            decoration: BoxDecoration(
-                              color: Colors.black54,
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            child: const Icon(
-                              Icons.zoom_in,
-                              color: Colors.white,
-                              size: 16,
+                          child: GestureDetector(
+                            onTap: _searchNewCover,
+                            child: Container(
+                              padding: const EdgeInsets.all(6),
+                              decoration: BoxDecoration(
+                                color: Colors.black54,
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: const Icon(
+                                Icons.camera_alt,
+                                color: Colors.white,
+                                size: 16,
+                              ),
                             ),
                           ),
                         ),
