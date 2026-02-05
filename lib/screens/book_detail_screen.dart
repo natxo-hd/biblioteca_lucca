@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:provider/provider.dart';
@@ -10,6 +11,7 @@ import '../theme/comic_theme.dart';
 import '../widgets/celebration_overlay.dart';
 import '../widgets/next_volume_dialog.dart';
 import '../widgets/cover_search_dialog.dart';
+import '../widgets/fullscreen_cover_viewer.dart';
 
 class BookDetailScreen extends StatefulWidget {
   final Book book;
@@ -104,9 +106,10 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
               ),
               child: Column(
                 children: [
-                  // Portada estilo cómic (tap para cambiar)
+                  // Portada estilo cómic (tap para ver, long press para cambiar)
                   GestureDetector(
-                    onTap: _searchNewCover,
+                    onTap: _openFullscreenCover,
+                    onLongPress: _searchNewCover,
                     child: Stack(
                       children: [
                         // Sombra
@@ -122,26 +125,22 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
                             ),
                           ),
                         ),
-                        Container(
-                          height: 220,
-                          width: 140,
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(
-                              color: ComicTheme.comicBorder,
-                              width: 4,
+                        Hero(
+                          tag: 'cover_${_book.id}',
+                          child: Container(
+                            height: 220,
+                            width: 140,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: ComicTheme.comicBorder,
+                                width: 4,
+                              ),
                             ),
-                          ),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(8),
-                            child: _book.coverUrl != null && _book.coverUrl!.isNotEmpty
-                                ? CachedNetworkImage(
-                                    imageUrl: _book.coverUrl!,
-                                    fit: BoxFit.cover,
-                                    errorWidget: (context, url, error) =>
-                                        _buildPlaceholder(),
-                                  )
-                                : _buildPlaceholder(),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: _buildCoverImage(),
+                            ),
                           ),
                         ),
                         // Badge de serie
@@ -178,7 +177,7 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
                               ),
                             ),
                           ),
-                        // Icono de editar portada
+                        // Icono de zoom
                         Positioned(
                           bottom: 4,
                           right: 4,
@@ -189,7 +188,7 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
                               borderRadius: BorderRadius.circular(20),
                             ),
                             child: const Icon(
-                              Icons.camera_alt,
+                              Icons.zoom_in,
                               color: Colors.white,
                               size: 16,
                             ),
@@ -660,6 +659,35 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
         size: 50,
         color: ComicTheme.primaryOrange.withValues(alpha: 0.7),
       ),
+    );
+  }
+
+  /// Construye la imagen de portada priorizando local → red
+  Widget _buildCoverImage() {
+    if (_book.localCoverPath != null && _book.localCoverPath!.isNotEmpty) {
+      final file = File(_book.localCoverPath!);
+      if (file.existsSync()) {
+        return Image.file(file, fit: BoxFit.cover);
+      }
+    }
+    if (_book.coverUrl != null && _book.coverUrl!.isNotEmpty) {
+      return CachedNetworkImage(
+        imageUrl: _book.coverUrl!,
+        fit: BoxFit.cover,
+        errorWidget: (context, url, error) => _buildPlaceholder(),
+      );
+    }
+    return _buildPlaceholder();
+  }
+
+  /// Abre la portada a pantalla completa con zoom
+  void _openFullscreenCover() {
+    openFullscreenCover(
+      context,
+      coverUrl: _book.coverUrl,
+      localCoverPath: _book.localCoverPath,
+      heroTag: 'cover_${_book.id}',
+      title: _book.title,
     );
   }
 
