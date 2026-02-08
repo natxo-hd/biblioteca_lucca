@@ -3,6 +3,8 @@ import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import '../constants/translations.dart';
 import '../models/book.dart';
+import '../models/reading_event.dart';
+import '../models/achievement.dart';
 
 class DatabaseService {
   static Database? _database;
@@ -17,7 +19,7 @@ class DatabaseService {
     String path = join(await getDatabasesPath(), 'biblioteca_lucca.db');
     return await openDatabase(
       path,
-      version: 10,
+      version: 11,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -58,6 +60,37 @@ class DatabaseService {
       )
     ''');
 
+    // Tabla para histórico de lectura
+    await db.execute('''
+      CREATE TABLE reading_history(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        bookId INTEGER NOT NULL,
+        previousPage INTEGER NOT NULL,
+        newPage INTEGER NOT NULL,
+        pagesRead INTEGER NOT NULL,
+        eventType TEXT NOT NULL,
+        timestamp TEXT NOT NULL
+      )
+    ''');
+
+    // Tabla para logros desbloqueados
+    await db.execute('''
+      CREATE TABLE achievements(
+        id TEXT PRIMARY KEY,
+        unlockedAt TEXT NOT NULL,
+        value INTEGER
+      )
+    ''');
+
+    // Tabla para estadísticas diarias (caché)
+    await db.execute('''
+      CREATE TABLE daily_stats(
+        date TEXT PRIMARY KEY,
+        pagesRead INTEGER DEFAULT 0,
+        booksCompleted INTEGER DEFAULT 0
+      )
+    ''');
+
     // Índices para mejorar rendimiento de consultas
     await db.execute('CREATE UNIQUE INDEX idx_books_isbn ON books(isbn)');
     await db.execute('CREATE INDEX idx_books_status ON books(status)');
@@ -65,6 +98,8 @@ class DatabaseService {
     await db.execute('CREATE INDEX idx_books_archived ON books(isArchived)');
     await db.execute('CREATE INDEX idx_books_pending_sync ON books(pendingSync)');
     await db.execute('CREATE INDEX idx_books_active_status ON books(isArchived, status)');
+    await db.execute('CREATE INDEX idx_reading_history_book ON reading_history(bookId)');
+    await db.execute('CREATE INDEX idx_reading_history_date ON reading_history(timestamp)');
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
@@ -124,6 +159,36 @@ class DatabaseService {
       await db.execute('CREATE INDEX IF NOT EXISTS idx_books_pending_sync ON books(pendingSync)');
       // Índice compuesto para consultas de libros activos por estado
       await db.execute('CREATE INDEX IF NOT EXISTS idx_books_active_status ON books(isArchived, status)');
+    }
+    if (oldVersion < 11) {
+      // Tablas para sistema de logros e histórico de lectura
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS reading_history(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          bookId INTEGER NOT NULL,
+          previousPage INTEGER NOT NULL,
+          newPage INTEGER NOT NULL,
+          pagesRead INTEGER NOT NULL,
+          eventType TEXT NOT NULL,
+          timestamp TEXT NOT NULL
+        )
+      ''');
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS achievements(
+          id TEXT PRIMARY KEY,
+          unlockedAt TEXT NOT NULL,
+          value INTEGER
+        )
+      ''');
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS daily_stats(
+          date TEXT PRIMARY KEY,
+          pagesRead INTEGER DEFAULT 0,
+          booksCompleted INTEGER DEFAULT 0
+        )
+      ''');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_reading_history_book ON reading_history(bookId)');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_reading_history_date ON reading_history(timestamp)');
     }
   }
 
@@ -709,5 +774,185 @@ class DatabaseService {
       WHERE isArchived = 1 AND seriesName IS NOT NULL
     ''');
     return (result.first['count'] as int?) ?? 0;
+  }
+
+  // ============ MÉTODOS PARA HISTÓRICO DE LECTURA ============
+
+  /// Inserta un evento de lectura
+  Future<int> insertReadingEvent(ReadingEvent event) async {
+    final db = await database;
+    return await db.insert('reading_history', event.toMap());
+  }
+
+  /// Obtiene el histórico de lectura de un libro
+  Future<List<ReadingEvent>> getReadingHistory(int bookId) async {
+    final db = await database;
+    final List<Map<String, dynamic>> maps = await db.query(
+      'reading_history',
+      where: 'bookId = ?',
+      whereArgs: [bookId],
+      orderBy: 'timestamp DESC',
+    );
+    return List.generate(maps.length, (i) => ReadingEvent.fromMap(maps[i]));
+  }
+
+  /// Obtiene eventos de lectura de una fecha específica
+  Future<List<ReadingEvent>> getReadingEventsForDate(DateTime date) async {
+    final db = await database;
+    final dateStr = date.toIso8601String().substring(0, 10); // YYYY-MM-DD
+    final List<Map<String, dynamic>> maps = await db.rawQuery(
+      "SELECT * FROM reading_history WHERE timestamp LIKE '$dateStr%' ORDER BY timestamp DESC",
+    );
+    return List.generate(maps.length, (i) => ReadingEvent.fromMap(maps[i]));
+  }
+
+  /// Obtiene todos los eventos de lectura en un rango de fechas
+  Future<List<ReadingEvent>> getReadingEventsBetween(DateTime start, DateTime end) async {
+    final db = await database;
+    final startStr = start.toIso8601String();
+    final endStr = end.toIso8601String();
+    final List<Map<String, dynamic>> maps = await db.query(
+      'reading_history',
+      where: 'timestamp >= ? AND timestamp <= ?',
+      whereArgs: [startStr, endStr],
+      orderBy: 'timestamp ASC',
+    );
+    return List.generate(maps.length, (i) => ReadingEvent.fromMap(maps[i]));
+  }
+
+  // ============ MÉTODOS PARA ESTADÍSTICAS DIARIAS ============
+
+  /// Obtiene o crea las estadísticas de una fecha
+  Future<Map<String, dynamic>> getDailyStats(String date) async {
+    final db = await database;
+    final result = await db.query(
+      'daily_stats',
+      where: 'date = ?',
+      whereArgs: [date],
+    );
+    if (result.isEmpty) {
+      return {'date': date, 'pagesRead': 0, 'booksCompleted': 0};
+    }
+    return result.first;
+  }
+
+  /// Actualiza las estadísticas diarias
+  Future<void> updateDailyStats(String date, {int? addPages, int? addBooksCompleted}) async {
+    final db = await database;
+    final current = await getDailyStats(date);
+
+    final newPagesRead = (current['pagesRead'] as int? ?? 0) + (addPages ?? 0);
+    final newBooksCompleted = (current['booksCompleted'] as int? ?? 0) + (addBooksCompleted ?? 0);
+
+    await db.insert(
+      'daily_stats',
+      {
+        'date': date,
+        'pagesRead': newPagesRead,
+        'booksCompleted': newBooksCompleted,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  /// Obtiene las páginas leídas en una fecha
+  Future<int> getPagesReadOnDate(String date) async {
+    final stats = await getDailyStats(date);
+    return stats['pagesRead'] as int? ?? 0;
+  }
+
+  /// Obtiene estadísticas de los últimos N días
+  Future<List<Map<String, dynamic>>> getDailyStatsRange(int days) async {
+    final db = await database;
+    final startDate = DateTime.now().subtract(Duration(days: days - 1));
+    final startStr = startDate.toIso8601String().substring(0, 10);
+
+    final List<Map<String, dynamic>> maps = await db.query(
+      'daily_stats',
+      where: 'date >= ?',
+      whereArgs: [startStr],
+      orderBy: 'date ASC',
+    );
+    return maps;
+  }
+
+  /// Obtiene las fechas con actividad de lectura (para rachas)
+  Future<List<String>> getDatesWithReadingActivity({int limit = 60}) async {
+    final db = await database;
+    final result = await db.rawQuery('''
+      SELECT DISTINCT substr(timestamp, 1, 10) as date
+      FROM reading_history
+      WHERE pagesRead > 0
+      ORDER BY date DESC
+      LIMIT ?
+    ''', [limit]);
+    return result.map((r) => r['date'] as String).toList();
+  }
+
+  // ============ MÉTODOS PARA LOGROS ============
+
+  /// Guarda un logro desbloqueado
+  Future<void> unlockAchievement(Achievement achievement) async {
+    final db = await database;
+    await db.insert(
+      'achievements',
+      achievement.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.ignore, // No sobrescribir si ya existe
+    );
+  }
+
+  /// Obtiene todos los logros desbloqueados
+  Future<List<Achievement>> getUnlockedAchievements() async {
+    final db = await database;
+    final List<Map<String, dynamic>> maps = await db.query(
+      'achievements',
+      orderBy: 'unlockedAt DESC',
+    );
+    return List.generate(maps.length, (i) => Achievement.fromMap(maps[i]));
+  }
+
+  /// Verifica si un logro está desbloqueado
+  Future<bool> isAchievementUnlocked(String achievementId) async {
+    final db = await database;
+    final result = await db.query(
+      'achievements',
+      where: 'id = ?',
+      whereArgs: [achievementId],
+    );
+    return result.isNotEmpty;
+  }
+
+  /// Obtiene un logro específico
+  Future<Achievement?> getAchievement(String achievementId) async {
+    final db = await database;
+    final result = await db.query(
+      'achievements',
+      where: 'id = ?',
+      whereArgs: [achievementId],
+    );
+    if (result.isEmpty) return null;
+    return Achievement.fromMap(result.first);
+  }
+
+  /// Cuenta libros completados en un período
+  Future<int> countCompletedBooksInPeriod(DateTime start, DateTime end) async {
+    final db = await database;
+    final startStr = start.toIso8601String();
+    final endStr = end.toIso8601String();
+    final result = await db.rawQuery('''
+      SELECT COUNT(*) as count FROM reading_history
+      WHERE eventType = 'completed' AND timestamp >= ? AND timestamp <= ?
+    ''', [startStr, endStr]);
+    return result.first['count'] as int? ?? 0;
+  }
+
+  /// Cuenta volúmenes completados de una serie
+  Future<int> countCompletedVolumesInSeries(String seriesName) async {
+    final db = await database;
+    final result = await db.rawQuery('''
+      SELECT COUNT(*) as count FROM books
+      WHERE seriesName = ? AND status = 'finished'
+    ''', [seriesName]);
+    return result.first['count'] as int? ?? 0;
   }
 }

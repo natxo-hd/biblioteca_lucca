@@ -12,6 +12,8 @@ import 'comic_type_detector.dart';
 import 'api/tomosygrapas_client.dart';
 import 'image_storage_service.dart';
 import 'new_volume_checker_service.dart';
+import 'reading_history_service.dart';
+import 'achievements_service.dart';
 
 class BookProvider extends ChangeNotifier {
   final DatabaseService _dbService = DatabaseService();
@@ -19,6 +21,8 @@ class BookProvider extends ChangeNotifier {
   final FirestoreService _firestoreService = FirestoreService();
   final TomosYGrapasClient _tomosYGrapasClient = TomosYGrapasClient();
   final ImageStorageService _imageStorage = ImageStorageService();
+  final ReadingHistoryService _historyService = ReadingHistoryService();
+  final AchievementsService _achievementsService = AchievementsService();
   late final ComicSearchService _comicSearchService;
 
   AuthService? _authService;
@@ -27,6 +31,9 @@ class BookProvider extends ChangeNotifier {
   BookProvider() {
     _comicSearchService = ComicSearchService(_apiService);
   }
+
+  /// Acceso al servicio de logros para la UI
+  AchievementsService get achievementsService => _achievementsService;
 
   List<Book> _readingBooks = [];
   List<Book> _finishedBooks = [];
@@ -443,17 +450,32 @@ class BookProvider extends ChangeNotifier {
   }
 
   Future<void> updateCurrentPage(int bookId, int page) async {
+    // Guardar página anterior antes de actualizar
+    final index = _readingBooks.indexWhere((b) => b.id == bookId);
+    if (index == -1) return;
+
+    final previousPage = _readingBooks[index].currentPage;
+
     await _dbService.updateCurrentPage(bookId, page);
 
-    final index = _readingBooks.indexWhere((b) => b.id == bookId);
-    if (index != -1) {
-      final book = _readingBooks[index].copyWith(currentPage: page);
-      _readingBooks = List.from(_readingBooks)..[index] = book;
-      notifyListeners();
+    final book = _readingBooks[index].copyWith(currentPage: page);
+    _readingBooks = List.from(_readingBooks)..[index] = book;
+    notifyListeners();
 
-      // Sincronizar cambio si hay conexión
-      _syncBookChange(book);
+    // Registrar progreso en histórico
+    if (page > previousPage) {
+      await _historyService.recordProgress(
+        bookId: bookId,
+        previousPage: previousPage,
+        newPage: page,
+      );
+
+      // Verificar logros
+      await _achievementsService.checkAfterProgress();
     }
+
+    // Sincronizar cambio si hay conexión
+    _syncBookChange(book);
   }
 
   Future<void> updateTotalPages(int bookId, int totalPages) async {
@@ -529,11 +551,29 @@ class BookProvider extends ChangeNotifier {
 
     final index = _readingBooks.indexWhere((b) => b.id == bookId);
     if (index != -1) {
-      final book = _readingBooks[index].copyWith(status: 'finished');
+      final originalBook = _readingBooks[index];
+      final book = originalBook.copyWith(status: 'finished');
+
       // Crear nuevas listas para que Selector detecte el cambio
       _readingBooks = [..._readingBooks]..removeAt(index);
       _finishedBooks = [book, ..._finishedBooks];
       notifyListeners();
+
+      // Registrar finalización en histórico
+      await _historyService.recordCompletion(
+        bookId: bookId,
+        totalPages: book.totalPages,
+        previousPage: originalBook.currentPage,
+      );
+
+      // Verificar si fue maratón (empezado y terminado el mismo día)
+      final wasMarathon = await _historyService.wasCompletedSameDay(bookId);
+
+      // Verificar logros
+      await _achievementsService.checkAfterCompletion(
+        book: book,
+        wasMarathon: wasMarathon,
+      );
 
       // Sincronizar cambio
       _syncBookChange(book);

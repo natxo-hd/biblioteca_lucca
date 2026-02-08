@@ -9,6 +9,7 @@ import '../services/parent_settings_service.dart';
 import '../services/new_volume_checker_service.dart';
 import '../theme/comic_theme.dart';
 import '../widgets/celebration_overlay.dart';
+import '../widgets/achievement_celebration.dart';
 import '../widgets/next_volume_dialog.dart';
 import '../widgets/cover_search_dialog.dart';
 import '../widgets/fullscreen_cover_viewer.dart';
@@ -732,7 +733,7 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
     return '${date.day}/${date.month}/${date.year}';
   }
 
-  void _updateProgress() {
+  Future<void> _updateProgress() async {
     final page = int.tryParse(_pageController.text) ?? 0;
     final totalPages = int.tryParse(_totalPagesController.text) ?? 0;
     final validPage = totalPages > 0 ? page.clamp(0, totalPages) : page;
@@ -745,7 +746,7 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
     }
 
     // Actualizar página actual
-    provider.updateCurrentPage(_book.id!, validPage);
+    await provider.updateCurrentPage(_book.id!, validPage);
 
     setState(() {
       _book = _book.copyWith(
@@ -765,6 +766,22 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
         duration: const Duration(seconds: 1),
       ),
     );
+
+    // Mostrar celebración de logros si hay alguno pendiente
+    await _showPendingAchievements();
+  }
+
+  /// Muestra las celebraciones de logros pendientes
+  Future<void> _showPendingAchievements() async {
+    final provider = context.read<BookProvider>();
+    final achievementsService = provider.achievementsService;
+
+    while (achievementsService.hasPendingAchievements && mounted) {
+      final achievement = achievementsService.popPendingAchievement();
+      if (achievement != null) {
+        await showAchievementCelebration(context, achievement);
+      }
+    }
   }
 
   Future<void> _searchNewCover() async {
@@ -1021,11 +1038,16 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
     final provider = context.read<BookProvider>();
     final parentSettings = ParentSettingsService();
 
-    // Mostrar celebración
+    // Mostrar celebración de libro completado
     await showCelebration(context, _book.title);
 
-    // Marcar como terminado
+    // Marcar como terminado (esto registra el evento y verifica logros)
     await provider.markAsFinished(_book.id!);
+
+    // Mostrar celebraciones de logros pendientes
+    if (mounted) {
+      await _showPendingAchievements();
+    }
 
     // Buscar info de serie si no la tiene
     Book bookWithSeries = _book;

@@ -10,6 +10,7 @@ import '../services/export_service.dart';
 import '../services/backup_service.dart';
 import '../services/update_service.dart';
 import 'package:provider/provider.dart';
+import 'achievements_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -155,6 +156,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                     ),
                   ),
+
+                  const SizedBox(height: 24),
+
+                  // Mis Logros
+                  _buildAchievementsSection(),
 
                   const SizedBox(height: 24),
 
@@ -368,6 +374,125 @@ class _SettingsScreenState extends State<SettingsScreen> {
         setState(() => _saving = false);
       }
     }
+  }
+
+  Widget _buildAchievementsSection() {
+    return _buildSection(
+      title: 'MIS LOGROS',
+      icon: Icons.emoji_events,
+      child: FutureBuilder<Map<String, dynamic>>(
+        future: context.read<BookProvider>().achievementsService.getAchievementStats(),
+        builder: (context, snapshot) {
+          final stats = snapshot.data;
+          final unlockedCount = stats?['unlockedCount'] ?? 0;
+          final totalCount = stats?['totalCount'] ?? 15;
+          final currentStreak = stats?['currentStreak'] ?? 0;
+
+          return Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  ComicTheme.secondaryBlue.withValues(alpha: 0.1),
+                  ComicTheme.accentYellow.withValues(alpha: 0.05),
+                ],
+              ),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: ComicTheme.comicBorder, width: 2),
+            ),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: ComicTheme.heroGradient,
+                        ),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: ComicTheme.comicBorder, width: 2),
+                      ),
+                      child: const Icon(
+                        Icons.emoji_events,
+                        color: Colors.white,
+                        size: 24,
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '$unlockedCount de $totalCount logros',
+                            style: GoogleFonts.bangers(
+                              fontSize: 18,
+                              color: ComicTheme.comicBorder,
+                            ),
+                          ),
+                          if (currentStreak > 0)
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.local_fire_department,
+                                  color: currentStreak >= 3
+                                      ? const Color(0xFFFF5722)
+                                      : Colors.grey[500],
+                                  size: 16,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  'Racha: $currentStreak dias',
+                                  style: GoogleFonts.comicNeue(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.bold,
+                                    color: currentStreak >= 3
+                                        ? const Color(0xFFFF5722)
+                                        : Colors.grey[600],
+                                  ),
+                                ),
+                              ],
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const AchievementsScreen(),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.arrow_forward, size: 20),
+                    label: Text(
+                      'VER TODOS',
+                      style: GoogleFonts.bangers(fontSize: 16),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: ComicTheme.secondaryBlue,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        side: const BorderSide(color: ComicTheme.comicBorder, width: 2),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
   }
 
   Widget _buildUpdateSection() {
