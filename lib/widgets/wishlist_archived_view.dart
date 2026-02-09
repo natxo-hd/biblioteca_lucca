@@ -6,6 +6,7 @@ import '../theme/comic_theme.dart';
 import '../services/book_provider.dart';
 import 'book_card.dart';
 import 'alphabet_index.dart';
+import 'reading_history_widget.dart';
 
 /// Vista combinada de libros solicitados (wishlist) y series archivadas.
 ///
@@ -155,6 +156,11 @@ class _WishlistAndArchivedViewState extends State<WishlistAndArchivedView> {
         CustomScrollView(
           controller: _scrollController,
           slivers: [
+            // --- HISTORIAL DE LECTURA ---
+            const SliverToBoxAdapter(
+              child: ReadingHistoryWidget(),
+            ),
+
             // --- SOLICITADOS ---
             if (hasWishlist) ...[
               SliverToBoxAdapter(
