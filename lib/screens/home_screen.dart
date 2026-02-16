@@ -8,6 +8,8 @@ import '../widgets/book_grid.dart';
 import '../widgets/grouped_book_grid.dart';
 import '../widgets/new_volumes_alert_dialog.dart';
 import '../widgets/wishlist_archived_view.dart';
+import '../widgets/skeleton_book_card.dart';
+import '../widgets/local_search_bar.dart';
 import '../theme/comic_theme.dart';
 import 'scanner_screen.dart';
 import 'settings_screen.dart';
@@ -22,6 +24,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen>
     with TickerProviderStateMixin {
   int _currentIndex = 0;
+  String _searchQuery = '';
   late AnimationController _fabController;
   late Animation<double> _fabAnimation;
   late AnimationController _tabController;
@@ -70,7 +73,10 @@ class _HomeScreenState extends State<HomeScreen>
   void _switchTab(int index) {
     if (index == _currentIndex) return;
     _tabController.forward(from: 0.0);
-    setState(() => _currentIndex = index);
+    setState(() {
+      _currentIndex = index;
+      _searchQuery = ''; // Limpiar búsqueda al cambiar de tab
+    });
   }
 
   @override
@@ -134,78 +140,108 @@ class _HomeScreenState extends State<HomeScreen>
         ),
       ),
       body: MangaBackground(
-        child: Selector<BookProvider, ({bool isLoading, List<Book> reading, List<Book> finished, List<Book> wishlist, List<Book> archived})>(
-          selector: (_, provider) => (
-            isLoading: provider.isLoading,
-            reading: provider.readingBooks,
-            finished: provider.finishedBooks,
-            wishlist: provider.wishlistBooks,
-            archived: provider.archivedBooks,
-          ),
-          shouldRebuild: (previous, next) {
-            // Solo rebuild si cambia isLoading o la lista del tab actual
-            if (previous.isLoading != next.isLoading) return true;
-            switch (_currentIndex) {
-              case 0:
-                return previous.reading != next.reading;
-              case 1:
-                return previous.finished != next.finished;
-              case 2:
-                return previous.wishlist != next.wishlist || previous.archived != next.archived;
-              default:
-                return false;
-            }
-          },
-          builder: (context, data, child) {
-            if (data.isLoading) {
-              return Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    _buildLoadingIndicator(),
-                    const SizedBox(height: 20),
-                    Text(
-                      'Cargando libros...',
-                      style: GoogleFonts.comicNeue(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: ComicTheme.comicBorder,
-                      ),
-                    ),
-                  ],
+        child: Column(
+          children: [
+            // Barra de búsqueda local
+            LocalSearchBar(
+              hintText: _currentIndex == 0
+                  ? 'Buscar en leyendo...'
+                  : _currentIndex == 1
+                      ? 'Buscar en terminados...'
+                      : 'Buscar en lista...',
+              onSearch: (query) {
+                setState(() => _searchQuery = query);
+              },
+            ),
+            // Contenido con lista de libros
+            Expanded(
+              child: Selector<BookProvider, ({bool isLoading, List<Book> reading, List<Book> finished, List<Book> wishlist, List<Book> archived})>(
+                selector: (_, provider) => (
+                  isLoading: provider.isLoading,
+                  reading: provider.readingBooks,
+                  finished: provider.finishedBooks,
+                  wishlist: provider.wishlistBooks,
+                  archived: provider.archivedBooks,
                 ),
-              );
-            }
+                shouldRebuild: (previous, next) {
+                  // Solo rebuild si cambia isLoading o la lista del tab actual
+                  if (previous.isLoading != next.isLoading) return true;
+                  switch (_currentIndex) {
+                    case 0:
+                      return previous.reading != next.reading;
+                    case 1:
+                      return previous.finished != next.finished;
+                    case 2:
+                      return previous.wishlist != next.wishlist || previous.archived != next.archived;
+                    default:
+                      return false;
+                  }
+                },
+                builder: (context, data, child) {
+                  if (data.isLoading) {
+                    // Skeleton loading según la pestaña actual
+                    return SingleChildScrollView(
+                      physics: const NeverScrollableScrollPhysics(),
+                      child: _currentIndex == 0 || _currentIndex == 1
+                          ? const SkeletonGroupedView(seriesCount: 3)
+                          : const SkeletonBookGrid(itemCount: 6),
+                    );
+                  }
 
-            final List<Book> books;
-            switch (_currentIndex) {
-              case 0:
-                books = data.reading;
-                break;
-              case 1:
-                books = data.finished;
-                break;
-              case 2:
-                books = data.wishlist;
-                break;
-              default:
-                books = [];
-            }
+                  List<Book> books;
+                  switch (_currentIndex) {
+                    case 0:
+                      books = data.reading;
+                      break;
+                    case 1:
+                      books = data.finished;
+                      break;
+                    case 2:
+                      books = data.wishlist;
+                      break;
+                    default:
+                      books = [];
+                  }
 
-            // Para tab 2, comprobar tanto wishlist como archived
-            if (_currentIndex == 2) {
-              if (books.isEmpty && data.archived.isEmpty) {
-                return _buildEmptyState();
-              }
-            } else if (books.isEmpty) {
-              return _buildEmptyState();
-            }
+                  // Aplicar filtro de búsqueda
+                  if (_searchQuery.isNotEmpty) {
+                    books = books.where((book) {
+                      return FuzzySearch.matches(book.title, _searchQuery) ||
+                          FuzzySearch.matches(book.author, _searchQuery) ||
+                          (book.seriesName != null && FuzzySearch.matches(book.seriesName!, _searchQuery));
+                    }).toList();
+                  }
 
-            return FadeTransition(
-              opacity: _tabFadeAnimation,
-              child: _buildContent(books, data.archived),
-            );
-          },
+                  // Para tab 2, comprobar tanto wishlist como archived
+                  if (_currentIndex == 2) {
+                    // Filtrar archived también
+                    var filteredArchived = data.archived;
+                    if (_searchQuery.isNotEmpty) {
+                      filteredArchived = data.archived.where((book) {
+                        return FuzzySearch.matches(book.title, _searchQuery) ||
+                            FuzzySearch.matches(book.author, _searchQuery) ||
+                            (book.seriesName != null && FuzzySearch.matches(book.seriesName!, _searchQuery));
+                      }).toList();
+                    }
+                    if (books.isEmpty && filteredArchived.isEmpty) {
+                      return _searchQuery.isEmpty ? _buildEmptyState() : _buildNoResultsState();
+                    }
+                    return FadeTransition(
+                      opacity: _tabFadeAnimation,
+                      child: _buildContent(books, filteredArchived),
+                    );
+                  } else if (books.isEmpty) {
+                    return _searchQuery.isEmpty ? _buildEmptyState() : _buildNoResultsState();
+                  }
+
+                  return FadeTransition(
+                    opacity: _tabFadeAnimation,
+                    child: _buildContent(books, data.archived),
+                  );
+                },
+              ),
+            ),
+          ],
         ),
       ),
       bottomNavigationBar: _buildBottomNav(),
@@ -647,6 +683,62 @@ class _HomeScreenState extends State<HomeScreen>
                 subtitle,
                 style: GoogleFonts.comicNeue(
                   fontSize: 16,
+                  color: Colors.grey[600],
+                  fontWeight: FontWeight.bold,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNoResultsState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: Colors.grey[200],
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: Colors.grey[400]!,
+                  width: 3,
+                ),
+              ),
+              child: Icon(
+                Icons.search_off,
+                size: 48,
+                color: Colors.grey[500],
+              ),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              'SIN RESULTADOS',
+              style: GoogleFonts.bangers(
+                fontSize: 24,
+                color: Colors.grey[600],
+                letterSpacing: 2,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.grey[400]!, width: 2),
+              ),
+              child: Text(
+                'No hay libros que coincidan con "$_searchQuery"',
+                style: GoogleFonts.comicNeue(
+                  fontSize: 14,
                   color: Colors.grey[600],
                   fontWeight: FontWeight.bold,
                 ),
