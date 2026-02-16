@@ -10,6 +10,7 @@ import '../widgets/new_volumes_alert_dialog.dart';
 import '../widgets/wishlist_archived_view.dart';
 import '../widgets/skeleton_book_card.dart';
 import '../widgets/local_search_bar.dart';
+import '../widgets/comic_refresh_indicator.dart';
 import '../theme/comic_theme.dart';
 import 'scanner_screen.dart';
 import 'settings_screen.dart';
@@ -77,6 +78,30 @@ class _HomeScreenState extends State<HomeScreen>
       _currentIndex = index;
       _searchQuery = ''; // Limpiar búsqueda al cambiar de tab
     });
+  }
+
+  /// Refresca los datos al hacer pull-to-refresh
+  Future<void> _onRefresh() async {
+    final provider = context.read<BookProvider>();
+    await provider.loadBooks();
+
+    // Mostrar snackbar de confirmación
+    if (mounted) {
+      ScaffoldMessenger.of(context).clearSnackBars();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Biblioteca actualizada',
+            style: GoogleFonts.comicNeue(fontWeight: FontWeight.bold),
+          ),
+          backgroundColor: ComicTheme.powerGreen,
+          duration: const Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.fromLTRB(16, 0, 16, 80),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+      );
+    }
   }
 
   @override
@@ -226,17 +251,23 @@ class _HomeScreenState extends State<HomeScreen>
                     if (books.isEmpty && filteredArchived.isEmpty) {
                       return _searchQuery.isEmpty ? _buildEmptyState() : _buildNoResultsState();
                     }
-                    return FadeTransition(
-                      opacity: _tabFadeAnimation,
-                      child: _buildContent(books, filteredArchived),
+                    return ComicRefreshIndicator(
+                      onRefresh: _onRefresh,
+                      child: FadeTransition(
+                        opacity: _tabFadeAnimation,
+                        child: _buildContent(books, filteredArchived),
+                      ),
                     );
                   } else if (books.isEmpty) {
                     return _searchQuery.isEmpty ? _buildEmptyState() : _buildNoResultsState();
                   }
 
-                  return FadeTransition(
-                    opacity: _tabFadeAnimation,
-                    child: _buildContent(books, data.archived),
+                  return ComicRefreshIndicator(
+                    onRefresh: _onRefresh,
+                    child: FadeTransition(
+                      opacity: _tabFadeAnimation,
+                      child: _buildContent(books, data.archived),
+                    ),
                   );
                 },
               ),
