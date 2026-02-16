@@ -126,7 +126,7 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
                           ),
                         ),
                         Hero(
-                          tag: 'cover_${_book.id}',
+                          tag: 'book_cover_${_book.id ?? _book.isbn}',
                           child: Container(
                             height: 220,
                             width: 140,

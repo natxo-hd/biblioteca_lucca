@@ -27,6 +27,7 @@ class BookGrid extends StatelessWidget {
         return BookCard(
           book: books[index],
           showProgress: isReadingList,
+          showCircularProgress: isReadingList,
         );
       },
     );

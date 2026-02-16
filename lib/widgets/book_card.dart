@@ -11,11 +11,13 @@ import '../widgets/power_button.dart';
 class BookCard extends StatefulWidget {
   final Book book;
   final bool showProgress;
+  final bool showCircularProgress;
 
   const BookCard({
     super.key,
     required this.book,
     this.showProgress = false,
+    this.showCircularProgress = false,
   });
 
   @override
@@ -100,19 +102,22 @@ class _BookCardState extends State<BookCard>
                       ),
                     ),
                   ),
-                  // Portada
-                  Container(
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(
-                        color: ComicTheme.comicBorder,
-                        width: 3,
+                  // Portada con Hero animation
+                  Hero(
+                    tag: 'book_cover_${widget.book.id ?? widget.book.isbn}',
+                    child: Container(
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: ComicTheme.comicBorder,
+                          width: 3,
+                        ),
                       ),
-                    ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(11),
-                      child: _buildCoverImage(),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(11),
+                        child: _buildCoverImage(),
+                      ),
                     ),
                   ),
                   // Energy bar de progreso
@@ -250,6 +255,15 @@ class _BookCardState extends State<BookCard>
                         ),
                       ),
                     ),
+                  // Anillo de progreso circular
+                  if (widget.showCircularProgress &&
+                      widget.book.totalPages > 0 &&
+                      !widget.book.isFinished)
+                    Positioned.fill(
+                      child: _CircularProgressOverlay(
+                        progress: widget.book.progress,
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -366,5 +380,103 @@ class _BookCardState extends State<BookCard>
         ],
       ),
     );
+  }
+}
+
+/// Overlay con anillo de progreso circular alrededor de la portada
+class _CircularProgressOverlay extends StatelessWidget {
+  final double progress;
+
+  const _CircularProgressOverlay({required this.progress});
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: CustomPaint(
+        painter: _CircularProgressPainter(
+          progress: progress,
+          backgroundColor: Colors.black.withValues(alpha: 0.2),
+          progressColor: _getProgressColor(progress),
+          strokeWidth: 4,
+        ),
+      ),
+    );
+  }
+
+  Color _getProgressColor(double progress) {
+    if (progress >= 0.75) {
+      return ComicTheme.powerGreen;
+    } else if (progress >= 0.5) {
+      return ComicTheme.accentYellow;
+    } else if (progress >= 0.25) {
+      return ComicTheme.primaryOrange;
+    }
+    return ComicTheme.secondaryBlue;
+  }
+}
+
+class _CircularProgressPainter extends CustomPainter {
+  final double progress;
+  final Color backgroundColor;
+  final Color progressColor;
+  final double strokeWidth;
+
+  _CircularProgressPainter({
+    required this.progress,
+    required this.backgroundColor,
+    required this.progressColor,
+    required this.strokeWidth,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = (size.shortestSide / 2) - (strokeWidth / 2) - 2;
+
+    // Fondo del arco
+    final bgPaint = Paint()
+      ..color = backgroundColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth
+      ..strokeCap = StrokeCap.round;
+
+    canvas.drawCircle(center, radius, bgPaint);
+
+    // Arco de progreso
+    final progressPaint = Paint()
+      ..color = progressColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth
+      ..strokeCap = StrokeCap.round;
+
+    // Añadir glow
+    progressPaint.maskFilter = const MaskFilter.blur(BlurStyle.normal, 2);
+
+    const startAngle = -1.5708; // -90 grados (arriba)
+    final sweepAngle = 2 * 3.14159 * progress;
+
+    canvas.drawArc(
+      Rect.fromCircle(center: center, radius: radius),
+      startAngle,
+      sweepAngle,
+      false,
+      progressPaint,
+    );
+
+    // Dibujar otra vez sin blur para línea sólida
+    progressPaint.maskFilter = null;
+    canvas.drawArc(
+      Rect.fromCircle(center: center, radius: radius),
+      startAngle,
+      sweepAngle,
+      false,
+      progressPaint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _CircularProgressPainter oldDelegate) {
+    return oldDelegate.progress != progress ||
+        oldDelegate.progressColor != progressColor;
   }
 }

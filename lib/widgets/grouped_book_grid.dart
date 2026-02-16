@@ -1400,6 +1400,7 @@ class _GroupedBookGridState extends State<GroupedBookGrid> {
               key: ValueKey('${books[index].id}_${books[index].localCoverPath ?? books[index].coverUrl}'),
               book: books[index],
               showProgress: widget.isReadingList,
+              showCircularProgress: widget.isReadingList,
             ),
           );
         },
