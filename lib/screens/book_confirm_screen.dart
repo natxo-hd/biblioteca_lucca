@@ -553,59 +553,6 @@ class _BookConfirmScreenState extends State<BookConfirmScreen> {
     );
   }
 
-  /// Detecta series conocidas basándose en autor y título
-  /// Útil cuando el título no incluye el nombre de la serie
-  String? _detectKnownSeries(String title, String author) {
-    final lowerTitle = title.toLowerCase();
-    final lowerAuthor = author.toLowerCase();
-
-    debugPrint('=== Detectando serie conocida ===');
-    debugPrint('Título: "$lowerTitle"');
-    debugPrint('Autor: "$lowerAuthor"');
-
-    // Hawkeye de Fraction/Aja - "Pequeños Aciertos", "Río Bravo", etc.
-    final isFractionAja = lowerAuthor.contains('fraction') || lowerAuthor.contains('aja');
-    final isHawkeyeTitle = lowerTitle.contains('pequeños aciertos') ||
-         lowerTitle.contains('pequenos aciertos') ||  // Sin ñ
-         lowerTitle.contains('aciertos') ||  // Más flexible
-         lowerTitle.contains('rio bravo') ||
-         lowerTitle.contains('río bravo') ||
-         lowerTitle.contains('hawkeye') ||
-         lowerTitle.contains('ojo de halc');
-
-    debugPrint('Es Fraction/Aja: $isFractionAja');
-    debugPrint('Es título Hawkeye: $isHawkeyeTitle');
-
-    if (isFractionAja && isHawkeyeTitle) {
-      debugPrint('>>> Detectado: Ojo de Halcón');
-      return 'Ojo de Halcón';
-    }
-
-    // Daredevil de Bendis/Maleev
-    if ((lowerAuthor.contains('bendis') || lowerAuthor.contains('maleev')) &&
-        (lowerTitle.contains('daredevil') ||
-         lowerTitle.contains('sin miedo') ||
-         lowerTitle.contains('hombre sin miedo'))) {
-      return 'Daredevil';
-    }
-
-    // Immortal Hulk de Ewing
-    if (lowerAuthor.contains('ewing') &&
-        (lowerTitle.contains('hulk') || lowerTitle.contains('inmortal'))) {
-      return 'Inmortal Hulk';
-    }
-
-    // Batman de Snyder/Capullo
-    if ((lowerAuthor.contains('snyder') || lowerAuthor.contains('capullo')) &&
-        (lowerTitle.contains('batman') ||
-         lowerTitle.contains('tribunal de los búhos') ||
-         lowerTitle.contains('ciudad de los búhos'))) {
-      return 'Batman';
-    }
-
-    return null;
-  }
-
   /// Construye URL de portada de Casa del Libro a partir de ISBN
   String _buildCdlCoverUrl(String isbn) {
     final last2 = isbn.substring(isbn.length - 2);

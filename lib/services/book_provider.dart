@@ -885,7 +885,7 @@ class BookProvider extends ChangeNotifier {
 
         if (hasRealData) {
           // Usar datos reales de T&G
-          isbn = volumeData!['isbn']!;
+          isbn = volumeData['isbn']!;
           coverUrl = volumeData['coverUrl'];
           sourceUrl = volumeData['productUrl'];
           volumeTitle = volumeData['title'] ?? (isOmnibus ? '$seriesName $volNum' : '$seriesName Vol. $volNum');

@@ -359,47 +359,6 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  Widget _buildLoadingIndicator() {
-    return SizedBox(
-      width: 60,
-      height: 60,
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          const SizedBox(
-            width: 60,
-            height: 60,
-            child: CircularProgressIndicator(
-              color: ComicTheme.primaryOrange,
-              strokeWidth: 4,
-            ),
-          ),
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: ComicTheme.powerGradient,
-              ),
-              shape: BoxShape.circle,
-              boxShadow: [
-                BoxShadow(
-                  color: ComicTheme.primaryOrange.withValues(alpha: 0.4),
-                  blurRadius: 12,
-                ),
-              ],
-            ),
-            child: const Icon(
-              Icons.auto_stories,
-              color: Colors.white,
-              size: 20,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildContent(List<Book> books, List<Book> archivedBooks) {
     // Generar key basada en hash de portadas para forzar reconstrucción
     final coversHash = books.fold<int>(0, (hash, b) => hash ^ (b.localCoverPath ?? b.coverUrl ?? '').hashCode);
