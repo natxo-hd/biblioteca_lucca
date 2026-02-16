@@ -3,8 +3,10 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/book.dart';
 import '../theme/comic_theme.dart';
+import '../widgets/skeleton_search_result.dart';
 
 /// Pantalla de búsqueda por título para añadir libros sin código de barras
 class TitleSearchScreen extends StatefulWidget {
@@ -20,13 +22,49 @@ class _TitleSearchScreenState extends State<TitleSearchScreen> {
   List<_SearchResult> _results = [];
   bool _isSearching = false;
   String? _lastQuery;
+  List<String> _searchHistory = [];
+  static const _historyKey = 'search_history';
+  static const _maxHistoryItems = 10;
 
   @override
   void initState() {
     super.initState();
+    _loadSearchHistory();
     // Autofocus en el campo de búsqueda
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _focusNode.requestFocus();
+    });
+  }
+
+  Future<void> _loadSearchHistory() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _searchHistory = prefs.getStringList(_historyKey) ?? [];
+    });
+  }
+
+  Future<void> _saveToHistory(String query) async {
+    if (query.trim().isEmpty) return;
+    final trimmed = query.trim();
+
+    // Quitar si ya existe y añadir al principio
+    _searchHistory.remove(trimmed);
+    _searchHistory.insert(0, trimmed);
+
+    // Limitar a N elementos
+    if (_searchHistory.length > _maxHistoryItems) {
+      _searchHistory = _searchHistory.sublist(0, _maxHistoryItems);
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(_historyKey, _searchHistory);
+  }
+
+  Future<void> _clearHistory() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_historyKey);
+    setState(() {
+      _searchHistory = [];
     });
   }
 
@@ -40,6 +78,9 @@ class _TitleSearchScreenState extends State<TitleSearchScreen> {
   Future<void> _search(String query) async {
     if (query.trim().isEmpty || query.trim() == _lastQuery) return;
     _lastQuery = query.trim();
+
+    // Guardar en historial
+    _saveToHistory(query.trim());
 
     setState(() {
       _isSearching = true;
@@ -220,6 +261,152 @@ class _TitleSearchScreenState extends State<TitleSearchScreen> {
     Navigator.pop(context, book);
   }
 
+  Widget _buildEmptyOrHistoryState() {
+    // Si no hay búsqueda previa, mostrar historial o mensaje inicial
+    if (_lastQuery == null) {
+      return _searchHistory.isEmpty
+          ? _buildInitialState()
+          : _buildHistoryList();
+    }
+
+    // Si hay búsqueda sin resultados
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.search_off,
+            size: 64,
+            color: Colors.grey[400],
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'Sin resultados para "$_lastQuery"',
+            style: GoogleFonts.comicNeue(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: Colors.grey[600],
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 24),
+          ElevatedButton.icon(
+            onPressed: _createManual,
+            icon: const Icon(Icons.edit_note),
+            label: Text(
+              'CREAR MANUALMENTE',
+              style: GoogleFonts.bangers(fontSize: 16),
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: ComicTheme.primaryOrange,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+                side: const BorderSide(color: ComicTheme.comicBorder, width: 2),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInitialState() {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.search,
+            size: 64,
+            color: Colors.grey[400],
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'Busca por nombre de serie o titulo',
+            style: GoogleFonts.comicNeue(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: Colors.grey[600],
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHistoryList() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Header
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+          child: Row(
+            children: [
+              Icon(Icons.history, color: Colors.grey[600], size: 20),
+              const SizedBox(width: 8),
+              Text(
+                'BUSQUEDAS RECIENTES',
+                style: GoogleFonts.bangers(
+                  fontSize: 14,
+                  color: Colors.grey[600],
+                  letterSpacing: 1,
+                ),
+              ),
+              const Spacer(),
+              TextButton(
+                onPressed: _clearHistory,
+                child: Text(
+                  'BORRAR',
+                  style: GoogleFonts.comicNeue(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.red[400],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        // Lista de historial
+        Expanded(
+          child: ListView.builder(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            itemCount: _searchHistory.length,
+            itemBuilder: (context, index) {
+              final query = _searchHistory[index];
+              return Card(
+                margin: const EdgeInsets.only(bottom: 6),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  side: BorderSide(color: Colors.grey[300]!, width: 1),
+                ),
+                child: ListTile(
+                  leading: const Icon(Icons.history, color: Colors.grey),
+                  title: Text(
+                    query,
+                    style: GoogleFonts.comicNeue(
+                      fontSize: 15,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  trailing: const Icon(Icons.north_west, size: 18, color: Colors.grey),
+                  onTap: () {
+                    _searchController.text = query;
+                    _search(query);
+                  },
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
   Map<String, dynamic> _extractVolumeFromTitle(String title) {
     String? seriesName;
     int? volumeNumber;
@@ -338,68 +525,9 @@ class _TitleSearchScreenState extends State<TitleSearchScreen> {
           // Resultados
           Expanded(
             child: _isSearching
-                ? Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const CircularProgressIndicator(color: ComicTheme.primaryOrange),
-                        const SizedBox(height: 16),
-                        Text(
-                          'Buscando...',
-                          style: GoogleFonts.comicNeue(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.grey[600],
-                          ),
-                        ),
-                      ],
-                    ),
-                  )
+                ? const SearchingIndicator(message: 'Buscando en tiendas...')
                 : _results.isEmpty
-                    ? Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              _lastQuery == null ? Icons.search : Icons.search_off,
-                              size: 64,
-                              color: Colors.grey[400],
-                            ),
-                            const SizedBox(height: 16),
-                            Text(
-                              _lastQuery == null
-                                  ? 'Busca por nombre de serie o titulo'
-                                  : 'Sin resultados para "$_lastQuery"',
-                              style: GoogleFonts.comicNeue(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.grey[600],
-                              ),
-                              textAlign: TextAlign.center,
-                            ),
-                            if (_lastQuery != null) ...[
-                              const SizedBox(height: 24),
-                              ElevatedButton.icon(
-                                onPressed: _createManual,
-                                icon: const Icon(Icons.edit_note),
-                                label: Text(
-                                  'CREAR MANUALMENTE',
-                                  style: GoogleFonts.bangers(fontSize: 16),
-                                ),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: ComicTheme.primaryOrange,
-                                  foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(14),
-                                    side: const BorderSide(color: ComicTheme.comicBorder, width: 2),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                      )
+                    ? _buildEmptyOrHistoryState()
                     : ListView.builder(
                         padding: const EdgeInsets.symmetric(vertical: 8),
                         itemCount: _results.length,
