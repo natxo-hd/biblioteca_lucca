@@ -26,6 +26,7 @@ class _HomeScreenState extends State<HomeScreen>
     with TickerProviderStateMixin {
   int _currentIndex = 0;
   String _searchQuery = '';
+  bool _isSearchExpanded = false; // Para modo horizontal
   late AnimationController _fabController;
   late Animation<double> _fabAnimation;
   late AnimationController _tabController;
@@ -106,10 +107,13 @@ class _HomeScreenState extends State<HomeScreen>
 
   @override
   Widget build(BuildContext context) {
+    final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
+    final appBarHeight = isLandscape ? 44.0 : 60.0;
+
     return Scaffold(
       extendBodyBehindAppBar: false,
       appBar: PreferredSize(
-        preferredSize: const Size.fromHeight(60),
+        preferredSize: Size.fromHeight(appBarHeight),
         child: Container(
           decoration: BoxDecoration(
             gradient: const LinearGradient(
@@ -130,21 +134,23 @@ class _HomeScreenState extends State<HomeScreen>
               mainAxisSize: MainAxisSize.min,
               children: [
                 Container(
-                  padding: const EdgeInsets.all(6),
+                  padding: EdgeInsets.all(isLandscape ? 4 : 6),
                   decoration: BoxDecoration(
                     color: Colors.white.withValues(alpha: 0.2),
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: const Icon(Icons.auto_stories, size: 24),
+                  child: Icon(Icons.auto_stories, size: isLandscape ? 18 : 24),
                 ),
-                const SizedBox(width: 10),
-                Text(
-                  'BIBLIOTECA DE LUCCA',
-                  style: GoogleFonts.bangers(
-                    fontSize: 22,
-                    letterSpacing: 2,
+                if (!isLandscape) ...[
+                  const SizedBox(width: 10),
+                  Text(
+                    'BIBLIOTECA DE LUCCA',
+                    style: GoogleFonts.bangers(
+                      fontSize: 22,
+                      letterSpacing: 2,
+                    ),
                   ),
-                ),
+                ],
               ],
             ),
             centerTitle: true,
@@ -167,17 +173,20 @@ class _HomeScreenState extends State<HomeScreen>
       body: MangaBackground(
         child: Column(
           children: [
-            // Barra de búsqueda local
-            LocalSearchBar(
-              hintText: _currentIndex == 0
-                  ? 'Buscar en leyendo...'
-                  : _currentIndex == 1
-                      ? 'Buscar en terminados...'
-                      : 'Buscar en lista...',
-              onSearch: (query) {
-                setState(() => _searchQuery = query);
-              },
-            ),
+            // Barra de búsqueda local (colapsable en horizontal)
+            if (isLandscape)
+              _buildLandscapeSearchBar()
+            else
+              LocalSearchBar(
+                hintText: _currentIndex == 0
+                    ? 'Buscar en leyendo...'
+                    : _currentIndex == 1
+                        ? 'Buscar en terminados...'
+                        : 'Buscar en lista...',
+                onSearch: (query) {
+                  setState(() => _searchQuery = query);
+                },
+              ),
             // Contenido con lista de libros
             Expanded(
               child: Selector<BookProvider, ({bool isLoading, List<Book> reading, List<Book> finished, List<Book> wishlist, List<Book> archived})>(
@@ -359,6 +368,73 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
+  /// Barra de búsqueda compacta para modo horizontal
+  Widget _buildLandscapeSearchBar() {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      child: _isSearchExpanded
+          ? Row(
+              children: [
+                Expanded(
+                  child: Container(
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: ComicTheme.comicBorder, width: 2),
+                    ),
+                    child: TextField(
+                      autofocus: true,
+                      style: GoogleFonts.comicNeue(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      decoration: InputDecoration(
+                        hintText: 'Buscar...',
+                        hintStyle: GoogleFonts.comicNeue(
+                          color: Colors.grey[400],
+                          fontSize: 14,
+                        ),
+                        prefixIcon: const Icon(Icons.search, size: 18),
+                        border: InputBorder.none,
+                        contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                        isDense: true,
+                      ),
+                      onChanged: (query) {
+                        setState(() => _searchQuery = query.trim().toLowerCase());
+                      },
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 4),
+                IconButton(
+                  icon: const Icon(Icons.close, size: 20),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                  onPressed: () {
+                    setState(() {
+                      _isSearchExpanded = false;
+                      _searchQuery = '';
+                    });
+                  },
+                ),
+              ],
+            )
+          : Align(
+              alignment: Alignment.centerLeft,
+              child: IconButton(
+                icon: const Icon(Icons.search, color: ComicTheme.secondaryBlue),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                onPressed: () {
+                  setState(() => _isSearchExpanded = true);
+                },
+              ),
+            ),
+    );
+  }
+
   Widget _buildContent(List<Book> books, List<Book> archivedBooks) {
     // Generar key basada en hash de portadas para forzar reconstrucción
     final coversHash = books.fold<int>(0, (hash, b) => hash ^ (b.localCoverPath ?? b.coverUrl ?? '').hashCode);
@@ -381,10 +457,12 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Widget _buildBottomNav() {
+    final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
+
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(isLandscape ? 12 : 20)),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.1),
@@ -395,7 +473,10 @@ class _HomeScreenState extends State<HomeScreen>
       ),
       child: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+          padding: EdgeInsets.symmetric(
+            vertical: isLandscape ? 4 : 10,
+            horizontal: isLandscape ? 8 : 12,
+          ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
@@ -431,6 +512,8 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Widget _buildFAB() {
+    final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
+
     return MouseRegion(
       onEnter: (_) => _fabController.forward(),
       onExit: (_) => _fabController.reverse(),
@@ -448,7 +531,7 @@ class _HomeScreenState extends State<HomeScreen>
           },
           child: Container(
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(22),
+              borderRadius: BorderRadius.circular(isLandscape ? 16 : 22),
               gradient: const LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
@@ -459,12 +542,12 @@ class _HomeScreenState extends State<HomeScreen>
               ),
               border: Border.all(
                 color: ComicTheme.comicBorder,
-                width: 3,
+                width: isLandscape ? 2 : 3,
               ),
               boxShadow: [
                 BoxShadow(
                   color: const Color(0xFF5C6BC0).withValues(alpha: 0.4),
-                  blurRadius: 12,
+                  blurRadius: isLandscape ? 8 : 12,
                   spreadRadius: 1,
                 ),
                 const BoxShadow(
@@ -477,7 +560,7 @@ class _HomeScreenState extends State<HomeScreen>
             child: Material(
               color: Colors.transparent,
               child: InkWell(
-                borderRadius: BorderRadius.circular(19),
+                borderRadius: BorderRadius.circular(isLandscape ? 14 : 19),
                 onTap: () async {
                   final result = await Navigator.push<String>(
                     context,
@@ -510,16 +593,18 @@ class _HomeScreenState extends State<HomeScreen>
                   }
                 },
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 22, vertical: 14),
+                  padding: EdgeInsets.symmetric(
+                    horizontal: isLandscape ? 14 : 22,
+                    vertical: isLandscape ? 8 : 14,
+                  ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(
+                      Icon(
                         Icons.add_rounded,
-                        size: 28,
+                        size: isLandscape ? 22 : 28,
                         color: Colors.white,
-                        shadows: [
+                        shadows: const [
                           Shadow(
                             color: Colors.black38,
                             blurRadius: 4,
@@ -527,22 +612,24 @@ class _HomeScreenState extends State<HomeScreen>
                           ),
                         ],
                       ),
-                      const SizedBox(width: 8),
-                      Text(
-                        'AÑADIR',
-                        style: GoogleFonts.bangers(
-                          fontSize: 20,
-                          letterSpacing: 1.5,
-                          color: Colors.white,
-                          shadows: const [
-                            Shadow(
-                              color: Colors.black45,
-                              blurRadius: 4,
-                              offset: Offset(1, 1),
-                            ),
-                          ],
+                      if (!isLandscape) ...[
+                        const SizedBox(width: 8),
+                        Text(
+                          'AÑADIR',
+                          style: GoogleFonts.bangers(
+                            fontSize: 20,
+                            letterSpacing: 1.5,
+                            color: Colors.white,
+                            shadows: const [
+                              Shadow(
+                                color: Colors.black45,
+                                blurRadius: 4,
+                                offset: Offset(1, 1),
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
+                      ],
                     ],
                   ),
                 ),
@@ -750,6 +837,7 @@ class _HomeScreenState extends State<HomeScreen>
     required List<Color> gradient,
   }) {
     final isSelected = _currentIndex == index;
+    final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
 
     return GestureDetector(
       onTap: () => _switchTab(index),
@@ -757,8 +845,8 @@ class _HomeScreenState extends State<HomeScreen>
         duration: const Duration(milliseconds: 250),
         curve: Curves.easeOutCubic,
         padding: EdgeInsets.symmetric(
-          horizontal: isSelected ? 18 : 14,
-          vertical: 10,
+          horizontal: isLandscape ? (isSelected ? 12 : 10) : (isSelected ? 18 : 14),
+          vertical: isLandscape ? 4 : 10,
         ),
         decoration: BoxDecoration(
           gradient: isSelected
@@ -769,7 +857,7 @@ class _HomeScreenState extends State<HomeScreen>
                   ],
                 )
               : null,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(isLandscape ? 10 : 16),
           border: isSelected
               ? Border.all(color: color.withValues(alpha: 0.5), width: 2)
               : null,
@@ -777,45 +865,53 @@ class _HomeScreenState extends State<HomeScreen>
               ? [
                   BoxShadow(
                     color: color.withValues(alpha: 0.2),
-                    blurRadius: 12,
+                    blurRadius: isLandscape ? 6 : 12,
                     spreadRadius: 1,
                   ),
                 ]
               : null,
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            AnimatedScale(
-              scale: isSelected ? 1.2 : 1.0,
-              duration: const Duration(milliseconds: 250),
-              curve: Curves.easeOutBack,
-              child: Icon(
+        child: isLandscape
+            // En horizontal: solo icono
+            ? Icon(
                 isSelected ? selectedIcon : icon,
-                size: 26,
+                size: 22,
                 color: isSelected ? color : Colors.grey[500],
-                shadows: isSelected
-                    ? [
-                        Shadow(
-                          color: color.withValues(alpha: 0.5),
-                          blurRadius: 8,
-                        ),
-                      ]
-                    : null,
+              )
+            // En vertical: icono + texto
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  AnimatedScale(
+                    scale: isSelected ? 1.2 : 1.0,
+                    duration: const Duration(milliseconds: 250),
+                    curve: Curves.easeOutBack,
+                    child: Icon(
+                      isSelected ? selectedIcon : icon,
+                      size: 26,
+                      color: isSelected ? color : Colors.grey[500],
+                      shadows: isSelected
+                          ? [
+                              Shadow(
+                                color: color.withValues(alpha: 0.5),
+                                blurRadius: 8,
+                              ),
+                            ]
+                          : null,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  AnimatedDefaultTextStyle(
+                    duration: const Duration(milliseconds: 200),
+                    style: GoogleFonts.bangers(
+                      fontSize: isSelected ? 12 : 10,
+                      color: isSelected ? color : Colors.grey[500],
+                      letterSpacing: 0.5,
+                    ),
+                    child: Text(label),
+                  ),
+                ],
               ),
-            ),
-            const SizedBox(height: 4),
-            AnimatedDefaultTextStyle(
-              duration: const Duration(milliseconds: 200),
-              style: GoogleFonts.bangers(
-                fontSize: isSelected ? 12 : 10,
-                color: isSelected ? color : Colors.grey[500],
-                letterSpacing: 0.5,
-              ),
-              child: Text(label),
-            ),
-          ],
-        ),
       ),
     );
   }
